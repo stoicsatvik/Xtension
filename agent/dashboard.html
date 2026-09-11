@@ -12,10 +12,11 @@
         <div>
           <div class="eyebrow">XTENSION CONTROL PLANE</div>
           <h1>Your extensions, as a system.</h1>
-          <p>Inventory, access, relevance evidence, changes, and cleanup actions for everything installed in Chrome.</p>
+          <p>Inventory, access, relevance evidence, permission changes, and reversible cleanup experiments for everything installed in Chrome.</p>
         </div>
         <div class="actions">
           <button id="historyButton" class="secondary">Enable workflow relevance</button>
+          <button id="exportButton" class="secondary">Export local evidence</button>
           <button id="refreshButton">Refresh inventory</button>
         </div>
       </header>
@@ -27,11 +28,13 @@
         <select id="filterSelect" aria-label="Filter extensions">
           <option value="all">All</option>
           <option value="review">Needs review</option>
+          <option value="access-change">Unreviewed access change</option>
+          <option value="due-review">Scheduled review due</option>
           <option value="enabled">Enabled</option>
           <option value="disabled">Disabled</option>
-          <option value="high-access">High access</option>
+          <option value="high-access">High exposure</option>
           <option value="overlap">Possible overlap</option>
-          <option value="trial">Trial / trial completed</option>
+          <option value="trial">Trial history</option>
         </select>
       </section>
 
@@ -53,7 +56,7 @@
           <div class="eyebrow">DECISION QUEUE</div>
           <h2>Extensions ranked by attention needed</h2>
         </div>
-        <p>Recommendations are evidence-backed. Xtension does not silently modify extensions.</p>
+        <p>High exposure is not the same as low usefulness. Xtension keeps capability, workflow evidence, and decision confidence separate.</p>
       </section>
       <section id="inventory" class="inventory"></section>
 
@@ -62,10 +65,10 @@
           <div class="eyebrow">LOCAL CHANGE LOG</div>
           <h2>What changed in your extension system</h2>
         </div>
-        <p>State, version, permission, cleanup, and trial events observed by this browser.</p>
+        <p>State, version, permission, cleanup, and trial events observed locally from this Xtension installation onward.</p>
       </section>
       <section id="timeline" class="timeline"></section>
     </main>
-    <script type="module" src="dashboard.js"></script>
+    <script type="module" src="dashboard-v2.js"></script>
   </body>
 </html>
