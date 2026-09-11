@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Xtension Audit</title>
+    <link rel="stylesheet" href="dashboard.css" />
+    <link rel="stylesheet" href="audit.css" />
+  </head>
+  <body>
+    <main class="audit-shell">
+      <header class="audit-header">
+        <div>
+          <div class="eyebrow">GUIDED EXTENSION AUDIT</div>
+          <h1>Make decisions, not dashboards.</h1>
+          <p>Review the highest-attention extensions one at a time. Xtension shows the evidence; you make every consequential choice.</p>
+        </div>
+        <button id="backButton" class="secondary">Back to dashboard</button>
+      </header>
+
+      <section class="audit-progress-wrap">
+        <div class="audit-progress-meta">
+          <span id="progressLabel">Preparing audit…</span>
+          <span id="decisionCount"></span>
+        </div>
+        <div class="audit-progress"><div id="progressBar"></div></div>
+      </section>
+
+      <div id="notice" class="notice" hidden></div>
+      <section id="auditCard" class="audit-card"></section>
+      <section id="completeCard" class="audit-complete" hidden></section>
+    </main>
+    <script type="module" src="audit.js"></script>
+  </body>
+</html>
