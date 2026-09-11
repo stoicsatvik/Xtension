@@ -24,10 +24,16 @@ jobs:
           const worker = manifest?.background?.service_worker;
           if (!worker) throw new Error('Manifest has no background service worker');
           if (!fs.existsSync(`agent/${worker}`)) throw new Error(`Missing service worker: agent/${worker}`);
+          for (const html of ['agent/dashboard.html', 'agent/audit.html']) {
+            const source = fs.readFileSync(html, 'utf8');
+            if (/<script(?![^>]*\bsrc=)[^>]*>/i.test(source)) {
+              throw new Error(`${html} contains an inline script, which violates MV3 extension CSP`);
+            }
+          }
           NODE
       - name: Check Chrome agent module syntax
         run: |
-          for file in agent/service-worker-entry.js agent/background-recovery.js agent/background-install-review.js agent/service-worker.js agent/dashboard-v2.js agent/trial-cadence.js agent/impact-widget.js agent/recovery-archive.js agent/core.js agent/trial-policy.js agent/permission-catalog.js agent/decision-intelligence.js agent/cleanup-impact.js; do
+          for file in agent/service-worker-entry.js agent/background-recovery.js agent/background-install-review.js agent/service-worker.js agent/dashboard-v2.js agent/dashboard-nav.js agent/audit.js agent/trial-cadence.js agent/impact-widget.js agent/recovery-archive.js agent/core.js agent/trial-policy.js agent/permission-catalog.js agent/decision-intelligence.js agent/cleanup-impact.js; do
             echo "Checking $file"
             node --input-type=module --check < "$file"
           done
