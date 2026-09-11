@@ -1,4 +1,6 @@
-// Keep lifecycle observers that must run before normal inventory reconciliation
-// ahead of the main worker. Both modules are side-effectful by design.
+// Register lifecycle observers before normal inventory reconciliation.
+// These modules are intentionally side-effectful: the entrypoint defines their
+// listener order without turning the main worker into a monolith.
 import "./background-recovery.js";
+import "./background-install-review.js";
 import "./service-worker.js";
