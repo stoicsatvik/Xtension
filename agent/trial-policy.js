@@ -1,3 +1,22 @@
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export function trialDurationDays(trial) {
+  if (!trial?.startedAt || !trial?.plannedEndAt) return 0;
+  return Math.max(0, (trial.plannedEndAt - trial.startedAt) / DAY_MS);
+}
+
+export function trialEvidenceStrength(trial) {
+  if (!trial?.outcome) return "none";
+  if (trial.outcome === "needed") return "high";
+  if (trial.outcome !== "survived-trial") return "none";
+
+  const days = trialDurationDays(trial);
+  if (days >= 21) return "high";
+  if (days >= 7) return "medium";
+  if (days > 0) return "low";
+  return "unknown";
+}
+
 export function reconcileTrialObservation(trial, observation, now = Date.now()) {
   if (!trial?.active) return null;
 
