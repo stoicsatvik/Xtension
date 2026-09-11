@@ -9,6 +9,9 @@ import {
   inferCategory,
   observedStateAgeDays
 } from "../agent/core.js";
+import { decisionConfidence, portfolioSummary } from "../agent/decision-intelligence.js";
+import { cleanupImpact } from "../agent/cleanup-impact.js";
+import { applyTrialOutcome, reconcileTrialObservation } from "../agent/trial-policy.js";
 
 const extension = (overrides = {}) => ({
   id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -18,6 +21,8 @@ const extension = (overrides = {}) => ({
   enabled: true,
   permissions: [],
   hostPermissions: [],
+  observedStateSince: Date.now(),
+  mayDisable: true,
   ...overrides
 });
 
@@ -37,9 +42,15 @@ describe("exposure assessment", () => {
 });
 
 describe("host matching and workflow evidence", () => {
-  it("matches wildcard subdomains but not unrelated domains", () => {
+  it("matches wildcard subdomains and apex but not unrelated domains", () => {
     expect(hostPatternMatchesUrl("https://*.github.com/*", new URL("https://gist.github.com/x"))).toBe(true);
-    expect(hostPatternMatchesUrl("https://*.github.com/*", new URL("https://example.com"))).toBe(false);
+    expect(hostPatternMatchesUrl("https://*.github.com/*", new URL("https://github.com/openai"))).toBe(true);
+    expect(hostPatternMatchesUrl("https://*.github.com/*", new URL("https://notgithub.com"))).toBe(false);
+  });
+
+  it("keeps schemes distinct when host access is scheme-specific", () => {
+    expect(hostPatternMatchesUrl("http://example.com/*", new URL("https://example.com"))).toBe(false);
+    expect(hostPatternMatchesUrl("*://example.com/*", new URL("https://example.com"))).toBe(true);
   });
 
   it("keeps broad access separate from actual usage evidence", () => {
@@ -70,9 +81,16 @@ describe("recommendations", () => {
     expect(attentionPriority(item, { trial: { outcome: "survived-trial" } })).toBe(100);
   });
 
+  it("treats restore-during-trial as strong keep evidence", () => {
+    const item = extension();
+    const evidence = { trial: { active: false, outcome: "needed" } };
+    expect(buildRecommendation(item, evidence).kind).toBe("keep");
+    expect(decisionConfidence(item, evidence).level).toBe("high");
+  });
+
   it("respects explicit essential verdicts while still flagging broad access", () => {
     const item = extension({ hostPermissions: ["<all_urls>"] });
-    const recommendation = buildRecommendation(item, { verdict: "essential" });
+    const recommendation = buildRecommendation(item, { verdict: "essential", workflow: { kind: "no-overlap" } });
     expect(recommendation.kind).toBe("keep");
     expect(recommendation.label).toContain("monitor access");
   });
@@ -95,13 +113,15 @@ describe("conservative redundancy evidence", () => {
   it("detects same-category enabled tools as a review hint", () => {
     const items = [
       extension({ id: "one", name: "Dark Reader" }),
-      extension({ id: "two", name: "Night Mode Pro" })
+      extension({ id: "two", name: "Night Mode Pro" }),
+      extension({ id: "disabled", name: "Dark Mode Old", enabled: false })
     ];
     const evidence = findPotentialRedundancies(items);
     expect(inferCategory(items[0])).toBe("dark-mode");
     expect(evidence.one.category).toBe("dark-mode");
     expect(evidence.one.confidence).toBe("low");
-    expect(evidence.one.peers[0].id).toBe("two");
+    expect(evidence.one.peers.map((peer) => peer.id)).toEqual(["two"]);
+    expect(evidence.disabled).toBeUndefined();
   });
 
   it("does not call unrelated extensions redundant", () => {
@@ -110,5 +130,70 @@ describe("conservative redundancy evidence", () => {
       extension({ id: "two", name: "Password Manager" })
     ];
     expect(findPotentialRedundancies(items)).toEqual({});
+  });
+});
+
+describe("trial policy", () => {
+  const active = {
+    active: true,
+    status: "active",
+    startedAt: 100,
+    plannedEndAt: 200,
+    outcome: null
+  };
+
+  it("records an early re-enable as dependency evidence", () => {
+    const transition = reconcileTrialObservation(active, { exists: true, enabled: true }, 150);
+    expect(transition.outcome).toBe("needed");
+    expect(applyTrialOutcome(active, transition)).toMatchObject({ active: false, outcome: "needed", endedAt: 150 });
+  });
+
+  it("records surviving the whole disabled period as cleanup evidence", () => {
+    expect(reconcileTrialObservation(active, { exists: true, enabled: false }, 201).outcome).toBe("survived-trial");
+  });
+
+  it("records disappearance as uninstall evidence without attributing causality", () => {
+    expect(reconcileTrialObservation(active, { exists: false, enabled: false }, 150).outcome).toBe("uninstalled");
+  });
+
+  it("does nothing while an active trial is still running and disabled", () => {
+    expect(reconcileTrialObservation(active, { exists: true, enabled: false }, 150)).toBeNull();
+  });
+});
+
+describe("decision confidence and portfolio impact", () => {
+  it("keeps capability exposure separate from usefulness confidence", () => {
+    const item = extension({ permissions: ["debugger"], hostPermissions: ["<all_urls>"] });
+    const confidence = decisionConfidence(item, {});
+    expect(confidence.level).toBe("low");
+    expect(confidence.reasons.join(" ")).toContain("does not establish usefulness");
+  });
+
+  it("counts only enabled extensions in current cleanup attack-surface impact", () => {
+    const enabled = extension({ id: "enabled", permissions: ["scripting"], hostPermissions: ["<all_urls>"] });
+    const disabled = extension({ id: "disabled", enabled: false, permissions: ["debugger"], hostPermissions: ["<all_urls>"] });
+    const impact = cleanupImpact([enabled, disabled], {
+      enabled: { verdict: "unnecessary" },
+      disabled: { verdict: "unnecessary" }
+    });
+
+    expect(impact.enabledExtensions).toBe(1);
+    expect(impact.enabledHighExposure).toBe(1);
+    expect(impact.reviewCandidates).toBe(1);
+    expect(impact.highConfidenceCleanupCandidates).toBe(1);
+  });
+
+  it("summarizes explicit cleanup verdicts and trial evidence independently", () => {
+    const one = extension({ id: "one" });
+    const two = extension({ id: "two", enabled: false });
+    const summary = portfolioSummary([one, two], {
+      one: { verdict: "unnecessary" },
+      two: { trial: { outcome: "needed" } }
+    });
+
+    expect(summary.installed).toBe(2);
+    expect(summary.enabled).toBe(1);
+    expect(summary.disabled).toBe(1);
+    expect(summary.highConfidenceReviews).toBe(1);
   });
 });
