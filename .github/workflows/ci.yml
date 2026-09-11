@@ -20,7 +20,7 @@ jobs:
         run: node -e "JSON.parse(require('fs').readFileSync('agent/manifest.json','utf8'))"
       - name: Check Chrome agent module syntax
         run: |
-          for file in agent/service-worker.js agent/dashboard-v2.js agent/core.js agent/trial-policy.js agent/permission-catalog.js agent/decision-intelligence.js agent/cleanup-impact.js; do
+          for file in agent/service-worker.js agent/dashboard-v2.js agent/impact-widget.js agent/core.js agent/trial-policy.js agent/permission-catalog.js agent/decision-intelligence.js agent/cleanup-impact.js; do
             echo "Checking $file"
             node --input-type=module --check < "$file"
           done
