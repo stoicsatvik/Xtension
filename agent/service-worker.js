@@ -3,6 +3,8 @@ const TRIALS_KEY = "xtension.trials.v1";
 const TIMELINE_KEY = "xtension.timeline.v1";
 const MAX_TIMELINE_EVENTS = 500;
 const TRIAL_ALARM_PREFIX = "xtension.trial.";
+const INVENTORY_REFRESH_ALARM = "xtension.inventory.refresh";
+const INVENTORY_REFRESH_MINUTES = 6 * 60;
 
 function sortedUnique(values = []) {
   return [...new Set(values)].sort();
@@ -156,11 +158,64 @@ async function saveTrials(trials) {
   await chrome.storage.local.set({ [TRIALS_KEY]: trials });
 }
 
+async function completeTrial(extensionId) {
+  const trials = await getTrials();
+  const trial = trials[extensionId];
+  if (!trial?.active) return null;
+
+  const extension = await chrome.management.get(extensionId).catch(() => null);
+  trials[extensionId] = {
+    ...trial,
+    active: false,
+    status: "completed",
+    endedAt: Date.now(),
+    outcome: "survived-trial"
+  };
+  await saveTrials(trials);
+
+  if (extension) {
+    await appendTimeline([
+      eventFor(extension, "trial-completed", `${extension.name} completed its disable trial`, "No automatic re-enable or uninstall was performed.")
+    ]);
+  }
+
+  return trials[extensionId];
+}
+
+async function ensureBackgroundState() {
+  const inventoryAlarm = await chrome.alarms.get(INVENTORY_REFRESH_ALARM);
+  if (!inventoryAlarm) {
+    await chrome.alarms.create(INVENTORY_REFRESH_ALARM, {
+      delayInMinutes: INVENTORY_REFRESH_MINUTES,
+      periodInMinutes: INVENTORY_REFRESH_MINUTES
+    });
+  }
+
+  const trials = await getTrials();
+  const now = Date.now();
+
+  for (const [extensionId, trial] of Object.entries(trials)) {
+    if (!trial?.active || !trial.plannedEndAt) continue;
+
+    if (trial.plannedEndAt <= now) {
+      await completeTrial(extensionId);
+      continue;
+    }
+
+    const alarmName = `${TRIAL_ALARM_PREFIX}${extensionId}`;
+    const existing = await chrome.alarms.get(alarmName);
+    if (!existing) {
+      await chrome.alarms.create(alarmName, { when: trial.plannedEndAt });
+    }
+  }
+}
+
 async function startTrial(extensionId, days = 7) {
   const extension = await chrome.management.get(extensionId);
   const self = await chrome.management.getSelf();
   if (extension.id === self.id) throw new Error("Xtension cannot trial-disable itself.");
   if (!extension.mayDisable) throw new Error("Chrome does not allow this extension to be disabled by the user.");
+  if (!Number.isFinite(days) || days <= 0 || days > 30) throw new Error("Trial duration must be between 1 and 30 days.");
 
   const trials = await getTrials();
   const startedAt = Date.now();
@@ -257,11 +312,11 @@ async function refreshAfterManagementChange() {
 }
 
 chrome.runtime.onInstalled.addListener(() => {
-  void collectInventory();
+  void Promise.all([collectInventory(), ensureBackgroundState()]);
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  void collectInventory();
+  void Promise.all([collectInventory(), ensureBackgroundState()]);
 });
 
 chrome.management.onInstalled.addListener(refreshAfterManagementChange);
@@ -270,27 +325,14 @@ chrome.management.onEnabled.addListener(refreshAfterManagementChange);
 chrome.management.onDisabled.addListener(refreshAfterManagementChange);
 
 chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === INVENTORY_REFRESH_ALARM) {
+    void collectInventory().catch((error) => console.error("Xtension periodic inventory refresh failed", error));
+    return;
+  }
+
   if (!alarm.name.startsWith(TRIAL_ALARM_PREFIX)) return;
   const extensionId = alarm.name.slice(TRIAL_ALARM_PREFIX.length);
-  void (async () => {
-    const trials = await getTrials();
-    const trial = trials[extensionId];
-    if (!trial?.active) return;
-
-    const extension = await chrome.management.get(extensionId).catch(() => null);
-    await markTrial(extensionId, {
-      active: false,
-      status: "completed",
-      endedAt: Date.now(),
-      outcome: "survived-trial"
-    });
-
-    if (extension) {
-      await appendTimeline([
-        eventFor(extension, "trial-completed", `${extension.name} completed its disable trial`, "No automatic re-enable or uninstall was performed.")
-      ]);
-    }
-  })().catch((error) => console.error("Xtension trial completion failed", error));
+  void completeTrial(extensionId).catch((error) => console.error("Xtension trial completion failed", error));
 });
 
 chrome.action.onClicked.addListener(async () => {
@@ -329,3 +371,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   return false;
 });
+
+// MV3 service workers can be recreated at any time. Reconcile important alarms whenever this worker starts.
+void ensureBackgroundState().catch((error) => console.error("Xtension background reconciliation failed", error));
