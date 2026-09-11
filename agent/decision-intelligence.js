@@ -1,4 +1,5 @@
 import { buildRecommendation, exposureLevel, observedStateAgeDays } from "./core.js";
+import { trialDurationDays, trialEvidenceStrength } from "./trial-policy.js";
 
 export function decisionConfidence(extension, evidence = {}) {
   const trial = evidence.trial ?? null;
@@ -8,12 +9,31 @@ export function decisionConfidence(extension, evidence = {}) {
   const stateAgeDays = evidence.stateAgeDays ?? observedStateAgeDays(extension);
   const reasons = [];
 
-  if (verdict) reasons.push("explicit user verdict");
-  if (trial?.outcome === "needed") reasons.push("restored during disable trial");
-  if (trial?.outcome === "survived-trial") reasons.push("completed disable trial without restore");
-
-  if (reasons.length) {
+  if (verdict) {
+    reasons.push("explicit user verdict");
     return { level: "high", reasons };
+  }
+
+  if (trial?.outcome === "needed") {
+    reasons.push("restored during disable trial");
+    return { level: "high", reasons };
+  }
+
+  if (trial?.outcome === "survived-trial") {
+    const strength = trialEvidenceStrength(trial);
+    const days = trialDurationDays(trial);
+    reasons.push(
+      days > 0
+        ? `completed about ${Math.round(days)} days disabled without a recorded restore`
+        : "completed a disable trial without a recorded restore"
+    );
+    if (strength === "high") return { level: "high", reasons };
+    if (strength === "medium") {
+      reasons.push("shorter trials can miss monthly or infrequent workflows");
+      return { level: "medium", reasons };
+    }
+    reasons.push("trial duration is too short or unknown to support a strong cleanup conclusion");
+    return { level: "low", reasons };
   }
 
   if (!extension.enabled && stateAgeDays >= 30) reasons.push("continuously observed disabled for 30+ days");
