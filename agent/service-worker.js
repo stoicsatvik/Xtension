@@ -1,3 +1,5 @@
+import { applyTrialOutcome, reconcileTrialObservation } from "./trial-policy.js";
+
 const INVENTORY_KEY = "xtension.inventory.v1";
 const TRIALS_KEY = "xtension.trials.v1";
 const TIMELINE_KEY = "xtension.timeline.v1";
@@ -71,11 +73,15 @@ function accessChangeSeverity(event) {
   const data = event?.data ?? {};
   const addedPermissions = data.addedPermissions ?? [];
   const addedHosts = data.addedHosts ?? [];
-
   if (addedPermissions.some((permission) => SENSITIVE_PERMISSIONS.has(permission))) return "high";
   if (addedHosts.some(isBroadHostPattern)) return "high";
   if (addedPermissions.length || addedHosts.length) return "medium";
   return "low";
+}
+
+async function getAlerts() {
+  const stored = await chrome.storage.local.get(ALERTS_KEY);
+  return Array.isArray(stored[ALERTS_KEY]) ? stored[ALERTS_KEY] : [];
 }
 
 async function refreshAlertBadge(alerts = null) {
@@ -90,7 +96,6 @@ async function refreshAlertBadge(alerts = null) {
 async function appendAlerts(events) {
   const relevant = events.filter((event) => event.kind === "permission-change");
   if (!relevant.length) return;
-
   const existing = await getAlerts();
   const nextAlerts = relevant.map((event) => ({
     alertId: event.eventId,
@@ -117,11 +122,6 @@ async function appendTimeline(events) {
   await appendAlerts(events);
 }
 
-async function getAlerts() {
-  const stored = await chrome.storage.local.get(ALERTS_KEY);
-  return Array.isArray(stored[ALERTS_KEY]) ? stored[ALERTS_KEY] : [];
-}
-
 async function markAlertsSeen(alertIds = null) {
   const alerts = await getAlerts();
   const ids = alertIds ? new Set(alertIds) : null;
@@ -135,7 +135,6 @@ async function markAlertsSeen(alertIds = null) {
 
 function diffSnapshots(previous, next) {
   if (!previous?.extensions?.length) return [];
-
   const at = next.observedAt;
   const before = new Map(previous.extensions.map((item) => [item.id, item]));
   const after = new Map(next.extensions.map((item) => [item.id, item]));
@@ -149,28 +148,24 @@ function diffSnapshots(previous, next) {
     }
 
     if (prior.enabled !== current.enabled) {
-      events.push(
-        eventFor(
-          current,
-          current.enabled ? "enabled" : "disabled",
-          `${current.name} was ${current.enabled ? "enabled" : "disabled"}`,
-          current.disabledReason ? `Reason: ${current.disabledReason}` : null,
-          at
-        )
-      );
+      events.push(eventFor(
+        current,
+        current.enabled ? "enabled" : "disabled",
+        `${current.name} was ${current.enabled ? "enabled" : "disabled"}`,
+        current.disabledReason ? `Reason: ${current.disabledReason}` : null,
+        at
+      ));
     }
 
     if (prior.version !== current.version) {
-      events.push(
-        eventFor(
-          current,
-          "version-change",
-          `${current.name} updated`,
-          `${prior.version} → ${current.version}`,
-          at,
-          { fromVersion: prior.version, toVersion: current.version }
-        )
-      );
+      events.push(eventFor(
+        current,
+        "version-change",
+        `${current.name} updated`,
+        `${prior.version} → ${current.version}`,
+        at,
+        { fromVersion: prior.version, toVersion: current.version }
+      ));
     }
 
     if (!sameArray(prior.permissions, current.permissions) || !sameArray(prior.hostPermissions, current.hostPermissions)) {
@@ -183,16 +178,14 @@ function diffSnapshots(previous, next) {
       if (removedPermissions.length) parts.push(`- permissions: ${removedPermissions.join(", ")}`);
       if (addedHosts.length) parts.push(`+ hosts: ${addedHosts.join(", ")}`);
       if (removedHosts.length) parts.push(`- hosts: ${removedHosts.join(", ")}`);
-      events.push(
-        eventFor(
-          current,
-          "permission-change",
-          `${current.name} changed its access surface`,
-          parts.join(" · "),
-          at,
-          { addedPermissions, removedPermissions, addedHosts, removedHosts }
-        )
-      );
+      events.push(eventFor(
+        current,
+        "permission-change",
+        `${current.name} changed its access surface`,
+        parts.join(" · "),
+        at,
+        { addedPermissions, removedPermissions, addedHosts, removedHosts }
+      ));
     }
   }
 
@@ -245,28 +238,70 @@ async function saveTrials(trials) {
   await chrome.storage.local.set({ [TRIALS_KEY]: trials });
 }
 
-async function completeTrial(extensionId) {
+async function transitionActiveTrial(extensionId, observation, extensionHint = null) {
   const trials = await getTrials();
   const trial = trials[extensionId];
-  if (!trial?.active) return null;
+  const transition = reconcileTrialObservation(trial, observation);
+  if (!transition) return null;
 
-  const extension = await chrome.management.get(extensionId).catch(() => null);
-  trials[extensionId] = {
-    ...trial,
-    active: false,
-    status: "completed",
-    endedAt: Date.now(),
-    outcome: "survived-trial"
-  };
+  trials[extensionId] = applyTrialOutcome(trial, transition);
   await saveTrials(trials);
+  await chrome.alarms.clear(`${TRIAL_ALARM_PREFIX}${extensionId}`);
 
-  if (extension) {
+  const extension = extensionHint ?? await chrome.management.get(extensionId).catch(() => null);
+  const fallback = extension ?? { id: extensionId, name: trial?.extensionName ?? "Unknown extension" };
+
+  if (transition.outcome === "needed") {
     await appendTimeline([
-      eventFor(extension, "trial-completed", `${extension.name} completed its disable trial`, "No automatic re-enable or uninstall was performed.")
+      eventFor(fallback, "trial-needed", `${fallback.name} was restored during its trial`, "Strong evidence that the extension matters to the workflow.")
+    ]);
+  } else if (transition.outcome === "survived-trial") {
+    await appendTimeline([
+      eventFor(fallback, "trial-completed", `${fallback.name} completed its disable trial`, "It remained disabled for the full planned period. No automatic uninstall was performed.")
+    ]);
+  } else if (transition.outcome === "uninstalled") {
+    await appendTimeline([
+      eventFor(fallback, "trial-uninstalled", `${fallback.name} was removed during its disable trial`, "Xtension recorded the cleanup outcome even though removal may have happened outside Xtension.")
     ]);
   }
 
   return trials[extensionId];
+}
+
+async function completeTrial(extensionId) {
+  const extension = await chrome.management.get(extensionId).catch(() => null);
+  return transitionActiveTrial(
+    extensionId,
+    { exists: Boolean(extension), enabled: extension?.enabled ?? false },
+    extension
+  );
+}
+
+async function reconcileActiveTrials() {
+  const trials = await getTrials();
+  const now = Date.now();
+
+  for (const [extensionId, trial] of Object.entries(trials)) {
+    if (!trial?.active) continue;
+
+    const extension = await chrome.management.get(extensionId).catch(() => null);
+    const transition = reconcileTrialObservation(
+      trial,
+      { exists: Boolean(extension), enabled: extension?.enabled ?? false },
+      now
+    );
+
+    if (transition) {
+      await transitionActiveTrial(extensionId, { exists: Boolean(extension), enabled: extension?.enabled ?? false }, extension);
+      continue;
+    }
+
+    if (trial.plannedEndAt) {
+      const alarmName = `${TRIAL_ALARM_PREFIX}${extensionId}`;
+      const existing = await chrome.alarms.get(alarmName);
+      if (!existing) await chrome.alarms.create(alarmName, { when: trial.plannedEndAt });
+    }
+  }
 }
 
 async function ensureBackgroundState() {
@@ -277,25 +312,7 @@ async function ensureBackgroundState() {
       periodInMinutes: INVENTORY_REFRESH_MINUTES
     });
   }
-
-  const trials = await getTrials();
-  const now = Date.now();
-
-  for (const [extensionId, trial] of Object.entries(trials)) {
-    if (!trial?.active || !trial.plannedEndAt) continue;
-
-    if (trial.plannedEndAt <= now) {
-      await completeTrial(extensionId);
-      continue;
-    }
-
-    const alarmName = `${TRIAL_ALARM_PREFIX}${extensionId}`;
-    const existing = await chrome.alarms.get(alarmName);
-    if (!existing) {
-      await chrome.alarms.create(alarmName, { when: trial.plannedEndAt });
-    }
-  }
-
+  await reconcileActiveTrials();
   await refreshAlertBadge();
 }
 
@@ -309,83 +326,65 @@ async function startTrial(extensionId, days = 7) {
   const trials = await getTrials();
   const startedAt = Date.now();
   const plannedEndAt = startedAt + days * 24 * 60 * 60 * 1000;
-
-  if (extension.enabled) await chrome.management.setEnabled(extensionId, false);
-
   trials[extensionId] = {
     active: true,
     status: "active",
     startedAt,
     plannedEndAt,
     originalVersion: extension.version,
+    extensionName: extension.name,
     outcome: null
   };
   await saveTrials(trials);
-  await chrome.alarms.create(`${TRIAL_ALARM_PREFIX}${extensionId}`, { when: plannedEndAt });
+
+  try {
+    if (extension.enabled) await chrome.management.setEnabled(extensionId, false);
+    await chrome.alarms.create(`${TRIAL_ALARM_PREFIX}${extensionId}`, { when: plannedEndAt });
+  } catch (error) {
+    delete trials[extensionId];
+    await saveTrials(trials);
+    throw error;
+  }
+
   await appendTimeline([
     eventFor(extension, "trial-started", `${extension.name} entered a ${days}-day disable trial`, "Xtension will not uninstall it automatically.")
   ]);
-
-  return trials[extensionId];
-}
-
-async function markTrial(extensionId, patch) {
-  const trials = await getTrials();
-  if (!trials[extensionId]) return null;
-  trials[extensionId] = { ...trials[extensionId], ...patch };
-  await saveTrials(trials);
   return trials[extensionId];
 }
 
 async function endTrial(extensionId, outcome = "ended-manually") {
-  const extension = await chrome.management.get(extensionId).catch(() => null);
-  const trial = await markTrial(extensionId, {
+  const trials = await getTrials();
+  const trial = trials[extensionId];
+  if (!trial) return null;
+  trials[extensionId] = {
+    ...trial,
     active: false,
     status: "ended",
     endedAt: Date.now(),
     outcome
-  });
+  };
+  await saveTrials(trials);
   await chrome.alarms.clear(`${TRIAL_ALARM_PREFIX}${extensionId}`);
-  if (trial && extension) {
+  const extension = await chrome.management.get(extensionId).catch(() => null);
+  if (extension) {
     await appendTimeline([
       eventFor(extension, "trial-ended", `${extension.name} trial ended`, `Outcome: ${outcome}`)
     ]);
   }
-  return trial;
+  return trials[extensionId];
 }
 
 async function enableExtension(extensionId) {
   const extension = await chrome.management.get(extensionId);
   await chrome.management.setEnabled(extensionId, true);
-  const trials = await getTrials();
-  if (trials[extensionId]?.active) {
-    await markTrial(extensionId, {
-      active: false,
-      status: "ended",
-      endedAt: Date.now(),
-      outcome: "needed"
-    });
-    await chrome.alarms.clear(`${TRIAL_ALARM_PREFIX}${extensionId}`);
-    await appendTimeline([
-      eventFor(extension, "trial-needed", `${extension.name} was restored during its trial`, "Strong evidence that the extension matters to the workflow.")
-    ]);
-  }
+  await transitionActiveTrial(extensionId, { exists: true, enabled: true }, extension);
   return true;
 }
 
 async function uninstallExtension(extensionId) {
   const extension = await chrome.management.get(extensionId);
   await chrome.management.uninstall(extensionId, { showConfirmDialog: true });
-  const trials = await getTrials();
-  if (trials[extensionId]) {
-    await markTrial(extensionId, {
-      active: false,
-      status: "ended",
-      endedAt: Date.now(),
-      outcome: "uninstalled"
-    });
-    await chrome.alarms.clear(`${TRIAL_ALARM_PREFIX}${extensionId}`);
-  }
+  await transitionActiveTrial(extensionId, { exists: false, enabled: false }, extension);
   await appendTimeline([
     eventFor(extension, "cleanup", `${extension.name} was removed through Xtension`, null)
   ]);
@@ -400,6 +399,26 @@ async function refreshAfterManagementChange() {
   }
 }
 
+async function handleEnabled(extension) {
+  try {
+    await transitionActiveTrial(extension.id, { exists: true, enabled: true }, normalizeItem(extension));
+    await collectInventory();
+  } catch (error) {
+    console.error("Xtension enable reconciliation failed", error);
+  }
+}
+
+async function handleUninstalled(extensionId) {
+  try {
+    const stored = await chrome.storage.local.get(INVENTORY_KEY);
+    const prior = stored[INVENTORY_KEY]?.extensions?.find((item) => item.id === extensionId) ?? null;
+    await transitionActiveTrial(extensionId, { exists: false, enabled: false }, prior);
+    await collectInventory();
+  } catch (error) {
+    console.error("Xtension uninstall reconciliation failed", error);
+  }
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   void Promise.all([collectInventory(), ensureBackgroundState()]);
 });
@@ -409,16 +428,17 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 chrome.management.onInstalled.addListener(refreshAfterManagementChange);
-chrome.management.onUninstalled.addListener(refreshAfterManagementChange);
-chrome.management.onEnabled.addListener(refreshAfterManagementChange);
+chrome.management.onUninstalled.addListener((extensionId) => void handleUninstalled(extensionId));
+chrome.management.onEnabled.addListener((extension) => void handleEnabled(extension));
 chrome.management.onDisabled.addListener(refreshAfterManagementChange);
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === INVENTORY_REFRESH_ALARM) {
-    void collectInventory().catch((error) => console.error("Xtension periodic inventory refresh failed", error));
+    void Promise.all([collectInventory(), reconcileActiveTrials()]).catch((error) =>
+      console.error("Xtension periodic reconciliation failed", error)
+    );
     return;
   }
-
   if (!alarm.name.startsWith(TRIAL_ALARM_PREFIX)) return;
   const extensionId = alarm.name.slice(TRIAL_ALARM_PREFIX.length);
   void completeTrial(extensionId).catch((error) => console.error("Xtension trial completion failed", error));
@@ -430,7 +450,6 @@ chrome.action.onClicked.addListener(async () => {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message || typeof message !== "object") return false;
-
   const respond = (promise) => {
     promise.then(sendResponse).catch((error) => sendResponse({ error: error?.message || String(error) }));
     return true;
@@ -442,26 +461,21 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       return stored[INVENTORY_KEY] ?? (await collectInventory());
     })());
   }
-
   if (message.type === "inventory:refresh") return respond(collectInventory());
   if (message.type === "trials:get") return respond(getTrials());
   if (message.type === "alerts:get") return respond(getAlerts());
   if (message.type === "alerts:mark-seen") return respond(markAlertsSeen(message.alertIds ?? null));
-
   if (message.type === "timeline:get") {
     return respond((async () => {
       const stored = await chrome.storage.local.get(TIMELINE_KEY);
       return Array.isArray(stored[TIMELINE_KEY]) ? stored[TIMELINE_KEY] : [];
     })());
   }
-
   if (message.type === "trial:start") return respond(startTrial(message.extensionId, message.days ?? 7));
   if (message.type === "trial:end") return respond(endTrial(message.extensionId, message.outcome ?? "ended-manually"));
   if (message.type === "extension:enable") return respond(enableExtension(message.extensionId));
   if (message.type === "extension:uninstall") return respond(uninstallExtension(message.extensionId));
-
   return false;
 });
 
-// MV3 service workers can be recreated at any time. Reconcile alarms and alerts whenever this worker starts.
 void ensureBackgroundState().catch((error) => console.error("Xtension background reconciliation failed", error));
