@@ -6,7 +6,8 @@ import {
   exposureAssessment,
   findPotentialRedundancies,
   hostPatternMatchesUrl,
-  inferCategory
+  inferCategory,
+  observedStateAgeDays
 } from "../agent/core.js";
 
 const extension = (overrides = {}) => ({
@@ -74,6 +75,19 @@ describe("recommendations", () => {
     const recommendation = buildRecommendation(item, { verdict: "essential" });
     expect(recommendation.kind).toBe("keep");
     expect(recommendation.label).toContain("monitor access");
+  });
+
+  it("uses continuous observed disabled duration without pretending to know pre-install history", () => {
+    const now = Date.UTC(2026, 8, 11);
+    const item = extension({
+      enabled: false,
+      observedStateSince: now - 45 * 24 * 60 * 60 * 1000
+    });
+    expect(Math.floor(observedStateAgeDays(item, now))).toBe(45);
+
+    const recommendation = buildRecommendation(item, { stateAgeDays: 45 });
+    expect(recommendation.label).toContain("Long-disabled");
+    expect(attentionPriority(item, { stateAgeDays: 45 })).toBe(90);
   });
 });
 
