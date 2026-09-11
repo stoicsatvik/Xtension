@@ -1,6 +1,6 @@
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
-import { analyzePackage, extractExtensionId, stripCrxHeader } from "@/lib/analyzer";
+import { analyzePackage, extractExtensionId, stripCrxHeader } from "../lib/analyzer";
 
 describe("extension id parsing", () => {
   const id = "abcdefghijklmnopabcdefghijklmnop";
@@ -28,6 +28,7 @@ describe("package analysis", () => {
         version: "1.2.3",
         manifest_version: 3,
         permissions: ["tabs", "scripting"],
+        optional_permissions: ["history"],
         host_permissions: ["<all_urls>"],
       }),
     );
@@ -42,6 +43,8 @@ describe("package analysis", () => {
     const report = await analyzePackage("abcdefghijklmnopabcdefghijklmnop", bytes);
     expect(report.name).toBe("Fixture Extension");
     expect(report.permissions).toContain("tabs");
+    expect(report.optionalPermissions).toContain("history");
+    expect(report.capabilities.some((item) => item.source === "permission:history")).toBe(false);
     expect(report.hostPermissions).toContain("<all_urls>");
     expect(report.capabilities.some((item) => item.source === "host:<all_urls>")).toBe(true);
     expect(report.staticSignals.some((item) => item.label === "Tabs API reference")).toBe(true);
