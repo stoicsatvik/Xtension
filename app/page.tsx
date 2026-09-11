@@ -59,7 +59,7 @@ export default function Home() {
           <article>
             <span>01</span>
             <h2>Declared access</h2>
-            <p>Manifest permissions, host patterns, and content-script scope translated into normal language.</p>
+            <p>Required permissions, optional permissions, host patterns, and content-script scope are kept distinct.</p>
           </article>
           <article>
             <span>02</span>
@@ -92,14 +92,14 @@ function Report({ report }: { report: AnalysisReport }) {
         </div>
         <div className={`summaryBadge ${highCount > 0 ? "attention" : "quiet"}`}>
           <strong>{highCount}</strong>
-          <span>high-sensitivity capabilities</span>
+          <span>high-sensitivity required capabilities</span>
         </div>
       </div>
 
       <div className="grid">
-        <Panel title="Capabilities">
+        <Panel title="Required capabilities">
           {report.capabilities.length === 0 ? (
-            <Empty>No mapped high-level capabilities found.</Empty>
+            <Empty>No mapped high-level required capabilities found.</Empty>
           ) : (
             <div className="capabilityList">
               {report.capabilities.map((capability, index) => (
@@ -116,12 +116,20 @@ function Report({ report }: { report: AnalysisReport }) {
           )}
         </Panel>
 
-        <Panel title="Declared permissions">
-          <TokenList values={report.permissions} empty="No API permissions declared." />
+        <Panel title="Required API permissions">
+          <TokenList values={report.permissions} empty="No required API permissions declared." />
         </Panel>
 
-        <Panel title="Website access">
-          <TokenList values={[...report.hostPermissions, ...report.contentScriptMatches]} empty="No host patterns found." />
+        <Panel title="Required website access">
+          <TokenList values={[...report.hostPermissions, ...report.contentScriptMatches]} empty="No required host patterns or content-script matches found." />
+        </Panel>
+
+        <Panel title="Optional API permissions">
+          <TokenList values={report.optionalPermissions} empty="No optional API permissions declared." />
+        </Panel>
+
+        <Panel title="Optional website access">
+          <TokenList values={report.optionalHostPermissions} empty="No optional host permissions declared." />
         </Panel>
 
         <Panel title="Static code signals">
