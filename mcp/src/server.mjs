@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
+import { McpServer } from "@modelcontextprotocol/server";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
+import * as z from "zod/v4";
 import { claudeInstallCommand, codexInstallCommand, configFor, cursorConfig } from "./config.mjs";
 import {
   bridgePaths,
@@ -108,18 +108,14 @@ async function handleCliMode() {
   return false;
 }
 
-async function main() {
-  if (await handleCliMode()) return;
-
-  const token = await ensureBridgeToken();
-  const initialState = await readPersistedState();
-  const store = createBridgeStore({ token, initialState });
-  const { port } = startLocalBridge(store);
-
-  console.error(`Xtension MCP bridge listening on 127.0.0.1:${port}`);
-  console.error(`Bridge token stored at ${bridgePaths.tokenPath}`);
-
-  const server = new McpServer({ name: "xtension", version: "0.1.0" });
+function buildMcpServer(store) {
+  const server = new McpServer(
+    { name: "xtension", version: "0.1.0" },
+    {
+      instructions:
+        "Use Xtension as local browser-extension evidence. Treat permissions as capability, not proof of abuse. Prefer compact inventory/attention tools first, fetch one extension only when more detail is needed, and never claim raw browsing-history usage because Xtension does not provide it. Write actions change Chrome state and should follow the user's intent."
+    }
+  );
 
   server.registerTool("xtension_status", {
     description: "Check whether the local Xtension Chrome agent has synced with this MCP server.",
@@ -206,8 +202,21 @@ async function main() {
     annotations: { readOnlyHint: false, destructiveHint: true }
   }, async (input) => asText(await store.enqueueCommand("uninstall-extension", input)));
 
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  return server;
+}
+
+async function main() {
+  if (await handleCliMode()) return;
+
+  const token = await ensureBridgeToken();
+  const initialState = await readPersistedState();
+  const store = createBridgeStore({ token, initialState });
+  const { port } = startLocalBridge(store);
+
+  console.error(`Xtension MCP bridge listening on 127.0.0.1:${port}`);
+  console.error(`Bridge token stored at ${bridgePaths.tokenPath}`);
+
+  await serveStdio(() => buildMcpServer(store));
 }
 
 main().catch((error) => {
