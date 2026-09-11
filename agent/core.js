@@ -63,6 +63,24 @@ export function observedStateAgeDays(extension, now = Date.now()) {
   return Math.max(0, (now - extension.observedStateSince) / (24 * 60 * 60 * 1000));
 }
 
+export function managementAssessment(extension) {
+  const installType = extension?.installType ?? null;
+  const policyInstalled = installType === "admin";
+  const cannotDisable = extension?.mayDisable === false;
+  const managed = policyInstalled || cannotDisable;
+
+  return {
+    managed,
+    policyInstalled,
+    cannotDisable,
+    reason: !managed
+      ? null
+      : policyInstalled
+        ? "Chrome reports this extension as administrator-installed."
+        : "Chrome reports that this extension cannot be disabled by the user."
+  };
+}
+
 export function parseWebUrl(value) {
   try {
     const url = new URL(value);
@@ -185,6 +203,7 @@ export function buildRecommendation(extension, evidence = {}) {
     stateAgeDays = observedStateAgeDays(extension)
   } = evidence;
   const exposure = exposureLevel(extension);
+  const management = managementAssessment(extension);
 
   if (trial?.active) {
     return {
@@ -210,6 +229,14 @@ export function buildRecommendation(extension, evidence = {}) {
     };
   }
 
+  if (verdict === "essential" && management.managed) {
+    return {
+      label: exposure === "high" ? "Managed + essential — monitor access" : "Managed + marked essential",
+      kind: "keep",
+      reason: `${management.reason} You marked it essential, so Xtension will not frame policy control as a cleanup failure.`
+    };
+  }
+
   if (verdict === "essential") {
     return {
       label: exposure === "high" ? "Keep — essential, monitor access" : "Keep — marked essential",
@@ -220,11 +247,29 @@ export function buildRecommendation(extension, evidence = {}) {
     };
   }
 
+  if (verdict === "unnecessary" && management.managed) {
+    return {
+      label: "Managed but unwanted — review with admin",
+      kind: "review",
+      reason: `${management.reason} You marked it unnecessary, but Chrome does not expose a normal user cleanup path.`
+    };
+  }
+
   if (verdict === "unnecessary") {
     return {
       label: extension.enabled ? "Trial-disable now" : "Remove candidate",
       kind: "review",
       reason: "You marked this extension unnecessary. Xtension still requires a deliberate user action before disabling or removing it."
+    };
+  }
+
+  if (management.managed) {
+    return {
+      label: exposure === "high" ? "Managed by policy — review access" : "Managed by policy",
+      kind: exposure === "high" ? "review" : "neutral",
+      reason: exposure === "high"
+        ? `${management.reason} It has broad or sensitive capabilities, so the useful action is understanding and policy review rather than pretending the user can remove it.`
+        : `${management.reason} Xtension will not recommend a disable trial that Chrome will not permit.`
     };
   }
 
@@ -304,8 +349,12 @@ export function attentionPriority(extension, evidence = {}) {
     stateAgeDays = observedStateAgeDays(extension)
   } = evidence;
   const exposure = exposureLevel(extension);
+  const management = managementAssessment(extension);
 
   if (trial?.outcome === "survived-trial") return 100;
+  if (verdict === "unnecessary" && management.managed) return exposure === "high" ? 82 : 72;
+  if (management.managed && exposure === "high") return verdict === "essential" ? 32 : 64;
+  if (management.managed) return verdict === "essential" ? 10 : 20;
   if (verdict === "unnecessary" && exposure === "high") return 99;
   if (verdict === "unnecessary") return 97;
   if (!extension.enabled && stateAgeDays >= 30 && exposure === "high") return 96;
