@@ -17,9 +17,10 @@
           <p>Inventory, access, relevance evidence, permission changes, and reversible cleanup experiments for everything installed in Chrome.</p>
         </div>
         <div class="actions">
+          <button id="auditButton">Start 5-min audit</button>
           <button id="historyButton" class="secondary">Enable workflow relevance</button>
           <button id="exportButton" class="secondary">Export local evidence</button>
-          <button id="refreshButton">Refresh inventory</button>
+          <button id="refreshButton" class="secondary">Refresh inventory</button>
         </div>
       </header>
 
@@ -76,5 +77,8 @@
     <script type="module" src="trial-cadence.js"></script>
     <script type="module" src="impact-widget.js"></script>
     <script type="module" src="recovery-archive.js"></script>
+    <script>
+      document.querySelector('#auditButton').addEventListener('click', () => { location.href = 'audit.html'; });
+    </script>
   </body>
 </html>
