@@ -27,7 +27,7 @@ jobs:
           NODE
       - name: Check Chrome agent module syntax
         run: |
-          for file in agent/service-worker-entry.js agent/background-recovery.js agent/service-worker.js agent/dashboard-v2.js agent/impact-widget.js agent/recovery-archive.js agent/core.js agent/trial-policy.js agent/permission-catalog.js agent/decision-intelligence.js agent/cleanup-impact.js; do
+          for file in agent/service-worker-entry.js agent/background-recovery.js agent/background-install-review.js agent/service-worker.js agent/dashboard-v2.js agent/impact-widget.js agent/recovery-archive.js agent/core.js agent/trial-policy.js agent/permission-catalog.js agent/decision-intelligence.js agent/cleanup-impact.js; do
             echo "Checking $file"
             node --input-type=module --check < "$file"
           done
