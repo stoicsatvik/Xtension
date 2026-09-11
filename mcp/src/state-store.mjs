@@ -6,6 +6,8 @@ import path from "node:path";
 
 const DEFAULT_PORT = 43128;
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
+const DEFAULT_COMMAND_LEASE_MS = 30_000;
+const DEFAULT_DEDUPE_WINDOW_MS = 60_000;
 const STATE_DIR = path.join(os.homedir(), ".xtension");
 const TOKEN_PATH = path.join(STATE_DIR, "bridge-token");
 const STATE_PATH = path.join(STATE_DIR, "state.json");
@@ -53,6 +55,27 @@ function sanitizeSnapshot(input) {
   return sanitized;
 }
 
+function stableValue(value) {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stableValue(value[key])]));
+  }
+  return value;
+}
+
+function commandFingerprint(type, payload) {
+  return JSON.stringify([type, stableValue(payload)]);
+}
+
+function publicCommand(command) {
+  return {
+    id: command.id,
+    type: command.type,
+    payload: command.payload,
+    createdAt: command.createdAt
+  };
+}
+
 export async function ensureBridgeToken() {
   await fs.mkdir(STATE_DIR, { recursive: true, mode: 0o700 });
   const fromEnv = process.env.XTENSION_BRIDGE_TOKEN?.trim();
@@ -87,15 +110,34 @@ async function persistState(state) {
   await fs.rename(tmp, STATE_PATH);
 }
 
-export function createBridgeStore({ token, initialState }) {
+export function createBridgeStore({
+  token,
+  initialState,
+  now = () => Date.now(),
+  commandLeaseMs = DEFAULT_COMMAND_LEASE_MS,
+  dedupeWindowMs = DEFAULT_DEDUPE_WINDOW_MS
+}) {
   const state = {
     lastSyncAt: initialState?.lastSyncAt ?? 0,
     snapshot: initialState?.snapshot ?? {}
   };
   const commands = [];
   const waiters = new Map();
+  const completedByFingerprint = new Map();
+  const completedIds = new Map();
+
+  function pruneCompleted() {
+    const cutoff = now() - dedupeWindowMs;
+    for (const [fingerprint, entry] of completedByFingerprint) {
+      if (entry.completedAt < cutoff) completedByFingerprint.delete(fingerprint);
+    }
+    for (const [id, completedAt] of completedIds) {
+      if (completedAt < cutoff) completedIds.delete(id);
+    }
+  }
 
   function compactStatus() {
+    pruneCompleted();
     const inventoryCount = state.snapshot?.inventory?.extensions?.length ?? 0;
     return {
       connected: Boolean(state.lastSyncAt),
@@ -105,38 +147,90 @@ export function createBridgeStore({ token, initialState }) {
     };
   }
 
-  function enqueueCommand(type, payload = {}, timeoutMs = 40_000) {
-    const id = crypto.randomUUID();
-    const command = { id, type, payload, createdAt: Date.now() };
-    commands.push(command);
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        waiters.delete(id);
-        reject(new Error("Xtension agent did not answer the command in time. Open Chrome and ensure the local bridge is connected."));
-      }, timeoutMs);
-      waiters.set(id, {
-        resolve: (value) => {
-          clearTimeout(timer);
-          resolve(value);
-        }
-      });
+  function waitForResult(command, timeoutMs) {
+    const existing = waiters.get(command.id);
+    if (existing) return existing.promise;
+
+    let resolvePromise;
+    let rejectPromise;
+    const promise = new Promise((resolve, reject) => {
+      resolvePromise = resolve;
+      rejectPromise = reject;
     });
+    const timer = setTimeout(() => {
+      const current = waiters.get(command.id);
+      if (current?.promise === promise) waiters.delete(command.id);
+      rejectPromise(new Error("Xtension agent did not answer the command in time. The command remains queued safely; retrying the same action will not create a duplicate."));
+    }, timeoutMs);
+    waiters.set(command.id, {
+      promise,
+      resolve: (value) => {
+        clearTimeout(timer);
+        resolvePromise(value);
+      }
+    });
+    return promise;
+  }
+
+  function enqueueCommand(type, payload = {}, timeoutMs = 40_000) {
+    pruneCompleted();
+    const fingerprint = commandFingerprint(type, payload);
+    const cached = completedByFingerprint.get(fingerprint);
+    if (cached) return Promise.resolve(cached.result);
+
+    let command = commands.find((item) => item.fingerprint === fingerprint);
+    if (!command) {
+      command = {
+        id: crypto.randomUUID(),
+        type,
+        payload,
+        createdAt: now(),
+        leaseUntil: 0,
+        fingerprint
+      };
+      commands.push(command);
+    }
+    return waitForResult(command, timeoutMs);
   }
 
   function completeCommand(id, result) {
+    pruneCompleted();
+    const index = commands.findIndex((command) => command.id === id);
+    if (index < 0) return completedIds.has(id);
+
+    const [command] = commands.splice(index, 1);
+    const completedAt = now();
+    completedByFingerprint.set(command.fingerprint, { result, completedAt });
+    completedIds.set(id, completedAt);
+
     const waiter = waiters.get(id);
-    if (!waiter) return false;
-    waiters.delete(id);
-    waiter.resolve(result);
+    if (waiter) {
+      waiters.delete(id);
+      waiter.resolve(result);
+    }
     return true;
   }
 
-  async function waitForCommands(waitMs = 0) {
-    const deadline = Date.now() + Math.max(0, Math.min(waitMs, 25_000));
-    while (!commands.length && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 150));
+  function leaseAvailable(limit = 20) {
+    const leased = [];
+    const leasedUntil = now() + commandLeaseMs;
+    for (const command of commands) {
+      if (leased.length >= Math.max(1, Math.min(limit, 20))) break;
+      if ((command.leaseUntil ?? 0) > now()) continue;
+      command.leaseUntil = leasedUntil;
+      leased.push(publicCommand(command));
     }
-    return commands.splice(0, 20);
+    return leased;
+  }
+
+  async function waitForCommands(waitMs = 0) {
+    const deadline = now() + Math.max(0, Math.min(waitMs, 25_000));
+    let available = leaseAvailable();
+    while (!available.length && now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      available = leaseAvailable();
+    }
+    return available;
   }
 
   return {
@@ -148,12 +242,12 @@ export function createBridgeStore({ token, initialState }) {
     waitForCommands,
     async updateSnapshot(snapshot) {
       state.snapshot = sanitizeSnapshot(snapshot);
-      state.lastSyncAt = Date.now();
+      state.lastSyncAt = now();
       await persistState(state);
       return compactStatus();
     },
     takeCommands(limit = 20) {
-      return commands.splice(0, Math.max(1, Math.min(limit, 20)));
+      return leaseAvailable(limit);
     },
     token
   };
@@ -186,7 +280,7 @@ export function startLocalBridge(store, { port = Number(process.env.XTENSION_BRI
       if (req.method === "POST" && resultMatch) {
         const body = await readBody(req);
         const accepted = store.completeCommand(resultMatch[1], body);
-        return json(res, accepted ? 200 : 404, accepted ? { ok: true } : { error: "Unknown or expired command." });
+        return json(res, accepted ? 200 : 404, accepted ? { ok: true } : { error: "Unknown command." });
       }
 
       return json(res, 404, { error: "Not found." });
