@@ -16,4 +16,10 @@ jobs:
           node-version: 22
       - run: npm install
       - run: npm test
+      - name: Validate Chrome agent manifest
+        run: node -e "JSON.parse(require('fs').readFileSync('agent/manifest.json','utf8'))"
+      - name: Check Chrome agent service worker syntax
+        run: node --input-type=module --check < agent/service-worker.js
+      - name: Check Chrome agent dashboard syntax
+        run: node --input-type=module --check < agent/dashboard.js
       - run: npm run build
