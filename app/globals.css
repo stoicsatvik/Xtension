@@ -27,10 +27,12 @@ body {
 }
 
 button, input { font: inherit; }
+a { color: inherit; }
 
 main { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 72px 0 96px; }
 
 .hero { max-width: 920px; padding: 70px 0 42px; }
+.compactHero { padding-top: 24px; }
 .eyebrow { color: var(--accent); font-size: 12px; letter-spacing: .18em; font-weight: 800; margin-bottom: 18px; }
 .hero h1 { margin: 0; font-size: clamp(52px, 8vw, 96px); letter-spacing: -.055em; line-height: .95; max-width: 1000px; }
 .hero h1 span { color: #8f96a3; }
@@ -55,6 +57,14 @@ main { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 72px 0 96
 .reportHeader { display: flex; justify-content: space-between; gap: 24px; align-items: flex-end; padding: 28px 0; border-top: 1px solid var(--line); }
 .reportHeader h2 { margin: 0 0 8px; font-size: clamp(34px, 5vw, 62px); letter-spacing: -.04em; }
 .reportHeader p { margin: 0; color: var(--muted); word-break: break-all; }
+.reportActions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 16px; }
+.reportActions a,
+.backLink { display: inline-flex; width: max-content; text-decoration: none; border: 1px solid var(--line); background: var(--panel); color: #d9dde4; border-radius: 9px; padding: 9px 11px; font-size: 12px; font-weight: 700; }
+.reportActions a:hover,
+.backLink:hover { border-color: #49505d; }
+.reportPageIntro { max-width: 780px; padding: 16px 0 4px; }
+.reportPageIntro .backLink { margin-bottom: 42px; }
+.reportPageIntro p { margin: 0; color: var(--muted); line-height: 1.6; }
 .summaryBadge { min-width: 180px; border: 1px solid var(--line); border-radius: 14px; padding: 18px; display: flex; flex-direction: column; align-items: flex-start; background: var(--panel); }
 .summaryBadge strong { font-size: 36px; line-height: 1; }
 .summaryBadge span { color: var(--muted); font-size: 12px; margin-top: 8px; }
