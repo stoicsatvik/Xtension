@@ -1,7 +1,7 @@
 {
   "name": "@xtension/mcp",
   "version": "0.1.0",
-  "description": "Local-first MCP server and Chrome bridge for Xtension.",
+  "description": "Local-first MCP server that lets AI agents inspect and manage Chrome extensions through Xtension.",
   "type": "module",
   "bin": {
     "xtension-mcp": "./src/server.mjs"
@@ -9,14 +9,40 @@
   "scripts": {
     "start": "node src/server.mjs",
     "check": "node --check src/server.mjs && node --check src/state-store.mjs && node --check src/config.mjs",
-    "test": "node --test node-tests/*.mjs"
+    "test": "node --test node-tests/*.mjs",
+    "pack:check": "npm pack --dry-run",
+    "prepublishOnly": "npm run check && npm test && npm run pack:check"
   },
   "files": [
     "src",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=20"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "chrome",
+    "browser-extension",
+    "privacy",
+    "security",
+    "codex",
+    "claude",
+    "cursor"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stoicsatvik/Xtension.git",
+    "directory": "mcp"
+  },
+  "homepage": "https://github.com/stoicsatvik/Xtension/tree/main/mcp#readme",
+  "bugs": {
+    "url": "https://github.com/stoicsatvik/Xtension/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
