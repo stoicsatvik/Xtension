@@ -1,10 +1,23 @@
 const INVENTORY_KEY = "xtension.inventory.v1";
 const TRIALS_KEY = "xtension.trials.v1";
 const TIMELINE_KEY = "xtension.timeline.v1";
+const ALERTS_KEY = "xtension.alerts.v1";
 const MAX_TIMELINE_EVENTS = 500;
+const MAX_ALERTS = 100;
 const TRIAL_ALARM_PREFIX = "xtension.trial.";
 const INVENTORY_REFRESH_ALARM = "xtension.inventory.refresh";
 const INVENTORY_REFRESH_MINUTES = 6 * 60;
+
+const SENSITIVE_PERMISSIONS = new Set([
+  "history",
+  "cookies",
+  "webRequest",
+  "debugger",
+  "nativeMessaging",
+  "clipboardRead",
+  "management",
+  "scripting"
+]);
 
 function sortedUnique(values = []) {
   return [...new Set(values)].sort();
@@ -37,15 +50,7 @@ function normalizeItem(item) {
   };
 }
 
-async function appendTimeline(events) {
-  if (!events?.length) return;
-  const stored = await chrome.storage.local.get(TIMELINE_KEY);
-  const existing = Array.isArray(stored[TIMELINE_KEY]) ? stored[TIMELINE_KEY] : [];
-  const next = [...events, ...existing].slice(0, MAX_TIMELINE_EVENTS);
-  await chrome.storage.local.set({ [TIMELINE_KEY]: next });
-}
-
-function eventFor(extension, kind, summary, detail = null, at = Date.now()) {
+function eventFor(extension, kind, summary, detail = null, at = Date.now(), data = null) {
   return {
     eventId: crypto.randomUUID(),
     at,
@@ -53,8 +58,79 @@ function eventFor(extension, kind, summary, detail = null, at = Date.now()) {
     extensionName: extension?.name ?? "Unknown extension",
     kind,
     summary,
-    detail
+    detail,
+    data
   };
+}
+
+function isBroadHostPattern(pattern) {
+  return pattern === "<all_urls>" || pattern.includes("*://*/*");
+}
+
+function accessChangeSeverity(event) {
+  const data = event?.data ?? {};
+  const addedPermissions = data.addedPermissions ?? [];
+  const addedHosts = data.addedHosts ?? [];
+
+  if (addedPermissions.some((permission) => SENSITIVE_PERMISSIONS.has(permission))) return "high";
+  if (addedHosts.some(isBroadHostPattern)) return "high";
+  if (addedPermissions.length || addedHosts.length) return "medium";
+  return "low";
+}
+
+async function refreshAlertBadge(alerts = null) {
+  const items = alerts ?? (await getAlerts());
+  const unread = items.filter((alert) => !alert.seen).length;
+  await chrome.action.setBadgeText({ text: unread ? String(Math.min(unread, 99)) : "" });
+  await chrome.action.setTitle({
+    title: unread ? `Xtension · ${unread} access change${unread === 1 ? "" : "s"} to review` : "Open Xtension"
+  });
+}
+
+async function appendAlerts(events) {
+  const relevant = events.filter((event) => event.kind === "permission-change");
+  if (!relevant.length) return;
+
+  const existing = await getAlerts();
+  const nextAlerts = relevant.map((event) => ({
+    alertId: event.eventId,
+    at: event.at,
+    extensionId: event.extensionId,
+    extensionName: event.extensionName,
+    severity: accessChangeSeverity(event),
+    summary: event.summary,
+    detail: event.detail,
+    data: event.data,
+    seen: false
+  }));
+  const next = [...nextAlerts, ...existing].slice(0, MAX_ALERTS);
+  await chrome.storage.local.set({ [ALERTS_KEY]: next });
+  await refreshAlertBadge(next);
+}
+
+async function appendTimeline(events) {
+  if (!events?.length) return;
+  const stored = await chrome.storage.local.get(TIMELINE_KEY);
+  const existing = Array.isArray(stored[TIMELINE_KEY]) ? stored[TIMELINE_KEY] : [];
+  const next = [...events, ...existing].slice(0, MAX_TIMELINE_EVENTS);
+  await chrome.storage.local.set({ [TIMELINE_KEY]: next });
+  await appendAlerts(events);
+}
+
+async function getAlerts() {
+  const stored = await chrome.storage.local.get(ALERTS_KEY);
+  return Array.isArray(stored[ALERTS_KEY]) ? stored[ALERTS_KEY] : [];
+}
+
+async function markAlertsSeen(alertIds = null) {
+  const alerts = await getAlerts();
+  const ids = alertIds ? new Set(alertIds) : null;
+  const next = alerts.map((alert) =>
+    !alert.seen && (!ids || ids.has(alert.alertId)) ? { ...alert, seen: true, seenAt: Date.now() } : alert
+  );
+  await chrome.storage.local.set({ [ALERTS_KEY]: next });
+  await refreshAlertBadge(next);
+  return next;
 }
 
 function diffSnapshots(previous, next) {
@@ -91,7 +167,8 @@ function diffSnapshots(previous, next) {
           "version-change",
           `${current.name} updated`,
           `${prior.version} → ${current.version}`,
-          at
+          at,
+          { fromVersion: prior.version, toVersion: current.version }
         )
       );
     }
@@ -112,7 +189,8 @@ function diffSnapshots(previous, next) {
           "permission-change",
           `${current.name} changed its access surface`,
           parts.join(" · "),
-          at
+          at,
+          { addedPermissions, removedPermissions, addedHosts, removedHosts }
         )
       );
     }
@@ -130,19 +208,28 @@ function diffSnapshots(previous, next) {
 async function collectInventory() {
   const stored = await chrome.storage.local.get(INVENTORY_KEY);
   const previous = stored[INVENTORY_KEY] ?? null;
+  const previousById = new Map((previous?.extensions ?? []).map((item) => [item.id, item]));
   const self = await chrome.management.getSelf();
   const items = await chrome.management.getAll();
+  const observedAt = Date.now();
 
   const extensions = items
     .filter((item) => item.type === "extension" && item.id !== self.id)
     .map(normalizeItem)
+    .map((current) => {
+      const prior = previousById.get(current.id);
+      const sameEnabledState = prior && prior.enabled === current.enabled;
+      return {
+        ...current,
+        firstObservedAt: prior?.firstObservedAt ?? observedAt,
+        observedStateSince: sameEnabledState
+          ? (prior.observedStateSince ?? prior.firstObservedAt ?? previous?.observedAt ?? observedAt)
+          : observedAt
+      };
+    })
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  const snapshot = {
-    observedAt: Date.now(),
-    extensions
-  };
-
+  const snapshot = { observedAt, extensions };
   const changes = diffSnapshots(previous, snapshot);
   await chrome.storage.local.set({ [INVENTORY_KEY]: snapshot });
   await appendTimeline(changes);
@@ -208,6 +295,8 @@ async function ensureBackgroundState() {
       await chrome.alarms.create(alarmName, { when: trial.plannedEndAt });
     }
   }
+
+  await refreshAlertBadge();
 }
 
 async function startTrial(extensionId, days = 7) {
@@ -356,6 +445,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   if (message.type === "inventory:refresh") return respond(collectInventory());
   if (message.type === "trials:get") return respond(getTrials());
+  if (message.type === "alerts:get") return respond(getAlerts());
+  if (message.type === "alerts:mark-seen") return respond(markAlertsSeen(message.alertIds ?? null));
 
   if (message.type === "timeline:get") {
     return respond((async () => {
@@ -372,5 +463,5 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return false;
 });
 
-// MV3 service workers can be recreated at any time. Reconcile important alarms whenever this worker starts.
+// MV3 service workers can be recreated at any time. Reconcile alarms and alerts whenever this worker starts.
 void ensureBackgroundState().catch((error) => console.error("Xtension background reconciliation failed", error));
