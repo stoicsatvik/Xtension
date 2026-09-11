@@ -1,0 +1,61 @@
+.mcp-bridge {
+  margin: 14px 0 34px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(17, 19, 24, .82);
+  display: grid;
+  grid-template-columns: 1.2fr .8fr;
+  gap: 24px;
+  align-items: center;
+}
+
+.mcp-bridge h2 {
+  margin: 0 0 8px;
+  font-size: 22px;
+}
+
+.mcp-bridge p,
+.mcp-bridge small {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.mcp-bridge code {
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+
+.mcp-connect {
+  display: grid;
+  gap: 10px;
+}
+
+.mcp-connect input {
+  width: 100%;
+  padding: 12px 13px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.mcp-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mcp-error,
+.mcp-bridge.error small {
+  color: #ff9d9d;
+}
+
+@media (max-width: 800px) {
+  .mcp-bridge { grid-template-columns: 1fr; }
+  .mcp-actions { justify-content: flex-start; }
+}
