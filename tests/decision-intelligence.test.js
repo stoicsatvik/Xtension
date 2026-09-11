@@ -11,9 +11,15 @@ const extension = (overrides = {}) => ({
 });
 
 describe("decision confidence", () => {
-  it("treats explicit verdicts and trial outcomes as high-confidence evidence", () => {
+  it("treats explicit verdicts and restore-during-trial as high-confidence evidence", () => {
     expect(decisionConfidence(extension(), { verdict: "essential" }).level).toBe("high");
-    expect(decisionConfidence(extension(), { trial: { outcome: "survived-trial" } }).level).toBe("high");
+    expect(decisionConfidence(extension(), { trial: { outcome: "needed" } }).level).toBe("high");
+  });
+
+  it("does not overstate an unknown-duration completed trial", () => {
+    const result = decisionConfidence(extension({ enabled: false }), { trial: { outcome: "survived-trial" } });
+    expect(result.level).toBe("low");
+    expect(result.reasons.join(" ")).toContain("too short or unknown");
   });
 
   it("treats long-disabled and site-overlap evidence as medium confidence", () => {
