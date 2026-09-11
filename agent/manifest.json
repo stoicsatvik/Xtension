@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Xtension Agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local browser agent for the Xtension extension control plane.",
-  "permissions": ["management", "storage"],
+  "permissions": ["management", "storage", "alarms"],
   "optional_permissions": ["history"],
   "background": {
     "service_worker": "service-worker.js",
