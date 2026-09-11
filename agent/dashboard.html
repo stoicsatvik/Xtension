@@ -12,7 +12,7 @@
         <div>
           <div class="eyebrow">XTENSION CONTROL PLANE</div>
           <h1>Your extensions, as a system.</h1>
-          <p>Inventory, access, relevance evidence, and cleanup actions for everything installed in Chrome.</p>
+          <p>Inventory, access, relevance evidence, changes, and cleanup actions for everything installed in Chrome.</p>
         </div>
         <div class="actions">
           <button id="historyButton" class="secondary">Enable workflow relevance</button>
@@ -26,17 +26,34 @@
         <input id="searchInput" type="search" placeholder="Search extensions" />
         <select id="filterSelect" aria-label="Filter extensions">
           <option value="all">All</option>
+          <option value="review">Needs review</option>
           <option value="enabled">Enabled</option>
           <option value="disabled">Disabled</option>
           <option value="high-access">High access</option>
-          <option value="review">Review candidates</option>
-          <option value="trial">Trial disabled</option>
+          <option value="trial">Trial / trial completed</option>
         </select>
       </section>
 
       <div id="notice" class="notice" hidden></div>
+
+      <section class="section-heading">
+        <div>
+          <div class="eyebrow">DECISION QUEUE</div>
+          <h2>Extensions ranked by attention needed</h2>
+        </div>
+        <p>Recommendations are evidence-backed. Xtension does not silently modify extensions.</p>
+      </section>
       <section id="inventory" class="inventory"></section>
+
+      <section class="section-heading activity-heading">
+        <div>
+          <div class="eyebrow">LOCAL CHANGE LOG</div>
+          <h2>What changed in your extension system</h2>
+        </div>
+        <p>State, version, permission, cleanup, and trial events observed by this browser.</p>
+      </section>
+      <section id="timeline" class="timeline"></section>
     </main>
-    <script type="module" src="dashboard.js"></script>
+    <script src="dashboard.js"></script>
   </body>
 </html>
