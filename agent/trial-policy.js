@@ -1,4 +1,5 @@
 const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_DEPENDENCY_REASON_CHARS = 300;
 
 export function trialDurationDays(trial) {
   if (!trial?.startedAt || !trial?.plannedEndAt) return 0;
@@ -15,6 +16,32 @@ export function trialEvidenceStrength(trial) {
   if (days >= 7) return "medium";
   if (days > 0) return "low";
   return "unknown";
+}
+
+export function normalizeDependencyReason(value) {
+  if (typeof value !== "string") return null;
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) return null;
+  return normalized.slice(0, MAX_DEPENDENCY_REASON_CHARS);
+}
+
+export function applyTrialAnnotation(trial, reason, at = Date.now()) {
+  if (!trial || trial.outcome !== "needed") {
+    throw new Error("Dependency reasons can only annotate trials that ended because the extension was needed.");
+  }
+  const normalized = normalizeDependencyReason(reason);
+  if (!normalized) {
+    return {
+      ...trial,
+      dependencyReason: null,
+      dependencyReasonAt: null
+    };
+  }
+  return {
+    ...trial,
+    dependencyReason: normalized,
+    dependencyReasonAt: at
+  };
 }
 
 export function reconcileTrialObservation(trial, observation, now = Date.now()) {
