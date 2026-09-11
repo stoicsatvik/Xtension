@@ -1,0 +1,35 @@
+.version-history-list {
+  display: grid;
+  gap: 8px;
+}
+
+.version-history-item {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 10px;
+  background: rgba(9, 10, 12, .35);
+}
+
+.version-history-item > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.version-history-item strong {
+  font-size: 12px;
+}
+
+.version-history-item span {
+  color: #6f7682;
+  font-size: 10px;
+}
+
+.version-history-item p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+  word-break: break-word;
+}
