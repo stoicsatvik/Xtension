@@ -43,4 +43,6 @@ jobs:
         run: npm --prefix mcp test
       - name: Check Xtension MCP package syntax
         run: npm --prefix mcp run check
+      - name: Verify Xtension MCP publish tarball
+        run: npm --prefix mcp run pack:check
       - run: npm run build
