@@ -8,8 +8,10 @@ import {
   observedStateAgeDays
 } from "./core.js";
 import { decisionConfidence } from "./decision-intelligence.js";
+import { normalizeAuditSession, serializeAuditSession } from "./audit-session.js";
 
 const PREFERENCES_KEY = "xtension.preferences.v1";
+const AUDIT_SESSION_KEY = "xtension.audit.session.v1";
 
 const state = {
   snapshot: { observedAt: 0, extensions: [] },
@@ -20,7 +22,8 @@ const state = {
   queue: [],
   index: 0,
   decisions: 0,
-  skipped: new Set()
+  skipped: new Set(),
+  startedAt: Date.now()
 };
 
 function escapeHtml(value) {
@@ -90,6 +93,34 @@ function rebuildQueue({ preserveCurrent = false } = {}) {
   }
 }
 
+async function persistAuditSession() {
+  await chrome.storage.local.set({
+    [AUDIT_SESSION_KEY]: serializeAuditSession(state)
+  });
+}
+
+async function restoreAuditSession() {
+  const stored = await chrome.storage.local.get(AUDIT_SESSION_KEY);
+  const session = normalizeAuditSession(
+    stored[AUDIT_SESSION_KEY],
+    state.snapshot.extensions.map((extension) => extension.id)
+  );
+  state.startedAt = session.startedAt;
+  state.decisions = session.decisions;
+  state.skipped = new Set(session.skippedIds);
+}
+
+async function resetAuditSession() {
+  state.startedAt = Date.now();
+  state.decisions = 0;
+  state.skipped = new Set();
+  state.index = 0;
+  await persistAuditSession();
+  rebuildQueue();
+  render();
+  showNotice("Started a fresh local audit session.");
+}
+
 function workflowEvidence(workflow) {
   if (!workflow) return "Workflow mode is off; no browsing history is needed for this audit.";
   if (workflow.kind === "broad") return "Broad website eligibility cannot prove actual use, so Xtension deliberately ignores it as usage evidence.";
@@ -127,14 +158,18 @@ function render() {
     progressBar.style.width = "100%";
     complete.innerHTML = `
       <h2>Audit complete.</h2>
-      <p>You reviewed this queue without Xtension silently changing anything. Decisions and notes stay in local extension storage.</p>
+      <p>You reviewed this queue without Xtension silently changing anything. This audit session is saved locally, so closing Chrome does not erase your progress.</p>
       <div class="audit-summary">
         <article><strong>${state.decisions}</strong><span>decisions made</span></article>
         <article><strong>${Object.values(state.preferences).filter((item) => item.verdict === "essential").length}</strong><span>marked essential</span></article>
         <article><strong>${Object.values(state.preferences).filter((item) => item.verdict === "unnecessary").length}</strong><span>marked unnecessary</span></article>
       </div>
-      <button id="finishButton">Return to dashboard</button>`;
+      <div class="audit-actions">
+        <button id="finishButton">Return to dashboard</button>
+        <button id="restartButton" class="secondary">Start fresh audit</button>
+      </div>`;
     document.querySelector("#finishButton").addEventListener("click", () => location.href = "dashboard.html");
+    document.querySelector("#restartButton").addEventListener("click", () => void resetAuditSession());
     return;
   }
 
@@ -147,11 +182,13 @@ function render() {
   const exposure = exposureAssessment(extension);
   const preference = preferenceFor(extension.id);
   const icon = [...(extension.icons ?? [])].sort((a, b) => b.size - a.size)[0]?.url ?? "";
-  const progress = state.queue.length ? ((state.index + 1) / state.queue.length) * 100 : 100;
+  const reviewed = state.skipped.size;
+  const total = reviewed + state.queue.length;
+  const progress = total ? (reviewed / total) * 100 : 100;
 
-  progressLabel.textContent = `Extension ${state.index + 1} of ${state.queue.length}`;
+  progressLabel.textContent = `${reviewed} of ${total} reviewed`;
   decisionCount.textContent = `${state.decisions} decisions made`;
-  progressBar.style.width = `${progress}%`;
+  progressBar.style.width = `${Math.max(2, progress)}%`;
 
   card.innerHTML = `
     <div class="audit-identity">
@@ -207,6 +244,7 @@ async function refreshState() {
   const stored = await chrome.storage.local.get(PREFERENCES_KEY);
   state.preferences = stored[PREFERENCES_KEY] ?? {};
   await loadWorkflowSignals();
+  await restoreAuditSession();
   rebuildQueue();
 }
 
@@ -233,6 +271,7 @@ async function handleAction(event) {
       state.skipped.add(extension.id);
     }
 
+    await persistAuditSession();
     state.index = 0;
     state.trials = await sendWorker({ type: "trials:get" });
     state.snapshot = await sendWorker({ type: "inventory:get" });
