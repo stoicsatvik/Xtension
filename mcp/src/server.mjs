@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-import fs from "node:fs/promises";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { claudeInstallCommand, codexInstallCommand, configFor, cursorConfig } from "./config.mjs";
 import {
   bridgePaths,
   createBridgeStore,
@@ -52,11 +52,64 @@ function attentionScore(item, snapshot) {
   return score;
 }
 
-async function main() {
-  if (process.argv.includes("--print-token")) {
+async function handleCliMode() {
+  const args = process.argv.slice(2);
+  if (args.includes("--print-token")) {
     process.stdout.write(`${await ensureBridgeToken()}\n`);
-    return;
+    return true;
   }
+
+  const configIndex = args.indexOf("--config");
+  if (configIndex >= 0) {
+    const target = args[configIndex + 1];
+    const config = configFor(target);
+    process.stdout.write(config.type === "json" ? `${JSON.stringify(config.value, null, 2)}\n` : `${config.value}\n`);
+    return true;
+  }
+
+  if (args.includes("--setup")) {
+    const token = await ensureBridgeToken();
+    process.stdout.write([
+      "Xtension MCP local setup",
+      "",
+      `Pairing token: ${token}`,
+      "Paste this once into Xtension Dashboard → MCP Bridge.",
+      "",
+      "Codex:",
+      codexInstallCommand(),
+      "",
+      "Claude Code:",
+      claudeInstallCommand(),
+      "",
+      "Cursor (~/.cursor/mcp.json):",
+      JSON.stringify(cursorConfig(), null, 2),
+      "",
+      "Generic stdio command:",
+      "npx -y @xtension/mcp"
+    ].join("\n") + "\n");
+    return true;
+  }
+
+  if (args.includes("--help") || args.includes("-h")) {
+    process.stdout.write([
+      "Xtension MCP",
+      "",
+      "  xtension-mcp                 Start the stdio MCP server + local Chrome bridge",
+      "  xtension-mcp --setup         Print pairing token and client setup snippets",
+      "  xtension-mcp --print-token   Print only the persistent local pairing token",
+      "  xtension-mcp --config codex  Print Codex install command",
+      "  xtension-mcp --config claude Print Claude Code install command",
+      "  xtension-mcp --config cursor Print Cursor mcp.json fragment",
+      "  xtension-mcp --config generic Print generic stdio config"
+    ].join("\n") + "\n");
+    return true;
+  }
+
+  return false;
+}
+
+async function main() {
+  if (await handleCliMode()) return;
 
   const token = await ensureBridgeToken();
   const initialState = await readPersistedState();
