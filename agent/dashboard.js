@@ -1,4 +1,13 @@
-const HISTORY_WINDOW_DAYS = 30;
+import {
+  HISTORY_WINDOW_DAYS,
+  attentionPriority as evidencePriority,
+  buildRecommendation,
+  deriveWorkflowSignals,
+  exposureAssessment,
+  exposureLevel,
+  findPotentialRedundancies
+} from "./core.js";
+
 const PREFERENCES_KEY = "xtension.preferences.v1";
 
 const state = {
@@ -7,158 +16,30 @@ const state = {
   timeline: [],
   preferences: {},
   workflowSignals: {},
+  redundancySignals: {},
   query: "",
   filter: "all"
 };
-
-const sensitivePermissions = new Set([
-  "history",
-  "cookies",
-  "webRequest",
-  "debugger",
-  "nativeMessaging",
-  "clipboardRead",
-  "management",
-  "scripting"
-]);
-
-function hasBroadHostAccess(extension) {
-  return extension.hostPermissions.some(
-    (pattern) => pattern === "<all_urls>" || pattern.includes("*://*/*")
-  );
-}
-
-function exposureLevel(extension) {
-  const sensitive = extension.permissions.filter((permission) => sensitivePermissions.has(permission)).length;
-  const broad = hasBroadHostAccess(extension);
-  if (broad || sensitive >= 2) return "high";
-  if (sensitive === 1 || extension.hostPermissions.length > 5) return "medium";
-  return "low";
-}
 
 function userVerdict(extensionId) {
   return state.preferences[extensionId]?.verdict ?? null;
 }
 
-function recommendation(extension) {
-  const trial = state.trials[extension.id];
-  const workflow = state.workflowSignals[extension.id];
-  const exposure = exposureLevel(extension);
-  const verdict = userVerdict(extension.id);
-
-  if (trial?.active) {
-    return {
-      label: "Trial disabled",
-      kind: "trial",
-      reason: "Testing whether your workflow actually depends on it. Xtension will not remove it automatically."
-    };
-  }
-
-  if (trial?.outcome === "survived-trial") {
-    return {
-      label: "Trial passed — consider removal",
-      kind: "review",
-      reason: "The planned disable trial completed without Xtension recording a restore. That is strong cleanup evidence, not absolute proof of uselessness."
-    };
-  }
-
-  if (trial?.outcome === "needed") {
-    return {
-      label: "Keep — workflow dependency observed",
-      kind: "keep",
-      reason: "You restored this extension during a disable trial, which is strong evidence that it matters to your workflow."
-    };
-  }
-
-  if (verdict === "essential") {
-    return {
-      label: exposure === "high" ? "Keep — essential, monitor access" : "Keep — marked essential",
-      kind: "keep",
-      reason: exposure === "high"
-        ? "You marked it essential, but its access surface is broad enough to keep under review when permissions change."
-        : "You explicitly marked this extension essential."
-    };
-  }
-
-  if (verdict === "unnecessary") {
-    return {
-      label: extension.enabled ? "Trial-disable now" : "Remove candidate",
-      kind: "review",
-      reason: "You marked this extension unnecessary. Xtension still requires a deliberate user action before disabling or removing it."
-    };
-  }
-
-  if (!extension.enabled) {
-    return {
-      label: "Review for removal",
-      kind: "review",
-      reason: exposure === "high"
-        ? "It is already disabled but has a high access surface when enabled. This is a strong review candidate."
-        : "It is already disabled. Xtension will not assume that means unused, but it deserves review."
-    };
-  }
-
-  if (workflow?.kind === "no-overlap") {
-    return {
-      label: "Trial-disable candidate",
-      kind: "review",
-      reason: `No recent page overlap found in the last ${HISTORY_WINDOW_DAYS} days for its declared sites. This is context evidence, not proof of non-use.`
-    };
-  }
-
-  if (exposure === "high") {
-    return {
-      label: verdict === "optional" ? "Optional + high access — review" : "Review access",
-      kind: "review",
-      reason: verdict === "optional"
-        ? "You marked it optional and it has broad or sensitive capabilities, making it a good cleanup-test candidate."
-        : "This extension has broad or sensitive capabilities. Keep it only if the workflow value justifies that access."
-    };
-  }
-
-  if (verdict === "optional") {
-    return {
-      label: "Optional",
-      kind: "neutral",
-      reason: "You marked this extension optional. Xtension will surface stronger evidence if its relevance or access changes."
-    };
-  }
-
-  if (workflow?.kind === "overlap") {
-    return {
-      label: "Context overlap detected",
-      kind: "neutral",
-      reason: `Its declared sites overlapped ${workflow.matchedHosts} recently visited host${workflow.matchedHosts === 1 ? "" : "s"}. This does not prove the extension executed.`
-    };
-  }
-
+function evidenceFor(extension) {
   return {
-    label: "Assess relevance",
-    kind: "neutral",
-    reason: "No strong keep/remove evidence yet."
+    trial: state.trials[extension.id] ?? null,
+    workflow: state.workflowSignals[extension.id] ?? null,
+    verdict: userVerdict(extension.id),
+    redundancy: state.redundancySignals[extension.id] ?? null
   };
 }
 
-function attentionPriority(extension) {
-  const trial = state.trials[extension.id];
-  const workflow = state.workflowSignals[extension.id];
-  const exposure = exposureLevel(extension);
-  const verdict = userVerdict(extension.id);
+function recommendation(extension) {
+  return buildRecommendation(extension, evidenceFor(extension));
+}
 
-  if (trial?.outcome === "survived-trial") return 100;
-  if (verdict === "unnecessary" && exposure === "high") return 99;
-  if (verdict === "unnecessary") return 97;
-  if (!extension.enabled && exposure === "high") return 96;
-  if (workflow?.kind === "no-overlap" && exposure === "high") return 92;
-  if (verdict === "optional" && exposure === "high") return 90;
-  if (workflow?.kind === "no-overlap") return 86;
-  if (exposure === "high") return verdict === "essential" ? 60 : 78;
-  if (!extension.enabled) return 72;
-  if (trial?.active) return 68;
-  if (exposure === "medium") return verdict === "essential" ? 22 : 48;
-  if (trial?.outcome === "needed" || verdict === "essential") return 12;
-  if (verdict === "optional") return 36;
-  return 30;
+function attentionPriority(extension) {
+  return evidencePriority(extension, evidenceFor(extension));
 }
 
 function iconFor(extension) {
@@ -182,6 +63,7 @@ function renderStats() {
   const highAccess = extensions.filter((item) => exposureLevel(item) === "high").length;
   const trials = Object.values(state.trials).filter((trial) => trial.active).length;
   const reviews = extensions.filter((item) => recommendation(item).kind === "review").length;
+  const overlaps = Object.keys(state.redundancySignals).length;
 
   document.querySelector("#stats").innerHTML = [
     ["Installed", extensions.length],
@@ -189,6 +71,7 @@ function renderStats() {
     ["Disabled", disabled],
     ["High access", highAccess],
     ["Needs review", reviews],
+    ["Overlap hints", overlaps],
     ["Trials", trials]
   ]
     .map(([label, value]) => `<article><strong>${value}</strong><span>${label}</span></article>`)
@@ -199,6 +82,7 @@ function matchesFilter(extension) {
   if (state.filter === "enabled") return extension.enabled;
   if (state.filter === "disabled") return !extension.enabled;
   if (state.filter === "high-access") return exposureLevel(extension) === "high";
+  if (state.filter === "overlap") return Boolean(state.redundancySignals[extension.id]);
   if (state.filter === "review") return recommendation(extension).kind === "review";
   if (state.filter === "trial") {
     const trial = state.trials[extension.id];
@@ -231,10 +115,11 @@ function renderInventory() {
 }
 
 function extensionCard(extension) {
-  const exposure = exposureLevel(extension);
+  const exposure = exposureAssessment(extension);
   const rec = recommendation(extension);
   const trial = state.trials[extension.id];
   const workflow = state.workflowSignals[extension.id];
+  const redundancy = state.redundancySignals[extension.id];
   const verdict = userVerdict(extension.id);
   const icon = iconFor(extension);
   const permissionSummary = `${extension.permissions.length} API · ${extension.hostPermissions.length} host`;
@@ -256,7 +141,7 @@ function extensionCard(extension) {
           </div>
         </div>
         <div class="decision">
-          <span class="exposure ${exposure}">${exposure} access</span>
+          <span class="exposure ${exposure.level}">${exposure.level} access</span>
           <strong>${escapeHtml(rec.label)}</strong>
           <p>${escapeHtml(rec.reason)}</p>
         </div>
@@ -265,6 +150,10 @@ function extensionCard(extension) {
       <details>
         <summary>Evidence and controls</summary>
         <div class="details-grid">
+          <section>
+            <h3>Access interpretation</h3>
+            ${exposureEvidence(exposure)}
+          </section>
           <section>
             <h3>API permissions</h3>
             ${tokenList(extension.permissions)}
@@ -280,6 +169,10 @@ function extensionCard(extension) {
           <section>
             <h3>Trial evidence</h3>
             ${trialEvidence(trial)}
+          </section>
+          <section>
+            <h3>Possible overlap</h3>
+            ${redundancyEvidence(redundancy)}
           </section>
           <section>
             <h3>Your verdict</h3>
@@ -306,6 +199,13 @@ function extensionCard(extension) {
       </details>
     </article>
   `;
+}
+
+function exposureEvidence(exposure) {
+  if (!exposure.reasons.length) {
+    return `<p class="muted">No broad host access or mapped sensitive API permissions were found in Chrome's installed-extension metadata.</p>`;
+  }
+  return `<ul class="evidence-list">${exposure.reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul>`;
 }
 
 function workflowEvidence(workflow) {
@@ -335,38 +235,15 @@ function trialEvidence(trial) {
   return `<p class="muted">Previous trial outcome: ${escapeHtml(trial.outcome || trial.status || "unknown")}.</p>`;
 }
 
+function redundancyEvidence(redundancy) {
+  if (!redundancy) return `<p class="muted">No conservative same-category overlap hint found among enabled extensions.</p>`;
+  const peers = redundancy.peers.map((peer) => peer.name).join(", ");
+  return `<p class="muted">${escapeHtml(redundancy.reason)} Potential peers: ${escapeHtml(peers)}.</p>`;
+}
+
 function tokenList(values) {
   if (!values?.length) return `<p class="muted">None declared.</p>`;
   return `<div class="tokens">${values.map((value) => `<code>${escapeHtml(value)}</code>`).join("")}</div>`;
-}
-
-function parseWebUrl(value) {
-  try {
-    const url = new URL(value);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-    return url;
-  } catch {
-    return null;
-  }
-}
-
-function hostPatternMatchesUrl(pattern, url) {
-  if (pattern === "<all_urls>" || pattern.includes("*://*/*")) return true;
-
-  const match = pattern.match(/^(\*|https?|http):\/\/([^/]+)\//i);
-  if (!match) return false;
-
-  const scheme = match[1].toLowerCase();
-  const hostPattern = match[2].toLowerCase();
-  if (scheme !== "*" && `${scheme}:` !== url.protocol) return false;
-  if (hostPattern === "*") return true;
-
-  if (hostPattern.startsWith("*.")) {
-    const root = hostPattern.slice(2);
-    return url.hostname === root || url.hostname.endsWith(`.${root}`);
-  }
-
-  return url.hostname === hostPattern;
 }
 
 async function loadWorkflowSignals() {
@@ -383,41 +260,10 @@ async function loadWorkflowSignals() {
     maxResults: 5000
   });
 
-  const recentPages = historyItems
-    .map((item) => parseWebUrl(item.url || ""))
-    .filter(Boolean);
-
-  const signals = {};
-  for (const extension of state.snapshot.extensions) {
-    if (!extension.hostPermissions.length) {
-      signals[extension.id] = { kind: "no-hosts", totalRecentPages: recentPages.length, matchedPages: 0, matchedHosts: 0 };
-      continue;
-    }
-
-    if (hasBroadHostAccess(extension)) {
-      signals[extension.id] = {
-        kind: "broad",
-        totalRecentPages: recentPages.length,
-        matchedPages: recentPages.length,
-        matchedHosts: new Set(recentPages.map((url) => url.hostname)).size
-      };
-      continue;
-    }
-
-    const matching = recentPages.filter((url) =>
-      extension.hostPermissions.some((pattern) => hostPatternMatchesUrl(pattern, url))
-    );
-    const matchedHosts = new Set(matching.map((url) => url.hostname)).size;
-
-    signals[extension.id] = {
-      kind: matching.length > 0 ? "overlap" : "no-overlap",
-      totalRecentPages: recentPages.length,
-      matchedPages: matching.length,
-      matchedHosts
-    };
-  }
-
-  state.workflowSignals = signals;
+  state.workflowSignals = deriveWorkflowSignals(
+    state.snapshot.extensions,
+    historyItems.map((item) => item.url || "")
+  );
 }
 
 async function sendWorker(message) {
@@ -521,6 +367,7 @@ async function loadInventory(force = false) {
   state.timeline = await sendWorker({ type: "timeline:get" });
   const storedPreferences = await chrome.storage.local.get(PREFERENCES_KEY);
   state.preferences = storedPreferences[PREFERENCES_KEY] ?? {};
+  state.redundancySignals = findPotentialRedundancies(state.snapshot.extensions);
   await loadWorkflowSignals();
   renderStats();
   renderInventory();
