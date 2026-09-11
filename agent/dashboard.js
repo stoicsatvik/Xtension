@@ -1,9 +1,9 @@
-const TRIALS_KEY = "xtension.trials.v1";
 const HISTORY_WINDOW_DAYS = 30;
 
 const state = {
   snapshot: { observedAt: 0, extensions: [] },
   trials: {},
+  timeline: [],
   workflowSignals: {},
   query: "",
   filter: "all"
@@ -37,12 +37,29 @@ function exposureLevel(extension) {
 function recommendation(extension) {
   const trial = state.trials[extension.id];
   const workflow = state.workflowSignals[extension.id];
+  const exposure = exposureLevel(extension);
 
   if (trial?.active) {
     return {
       label: "Trial disabled",
       kind: "trial",
-      reason: "Testing whether your workflow actually depends on it."
+      reason: "Testing whether your workflow actually depends on it. Xtension will not remove it automatically."
+    };
+  }
+
+  if (trial?.outcome === "survived-trial") {
+    return {
+      label: "Trial passed — consider removal",
+      kind: "review",
+      reason: "The planned disable trial completed without Xtension recording a restore. That is strong cleanup evidence, not absolute proof of uselessness."
+    };
+  }
+
+  if (trial?.outcome === "needed") {
+    return {
+      label: "Keep — workflow dependency observed",
+      kind: "keep",
+      reason: "You restored this extension during a disable trial, which is strong evidence that it matters to your workflow."
     };
   }
 
@@ -50,7 +67,9 @@ function recommendation(extension) {
     return {
       label: "Review for removal",
       kind: "review",
-      reason: "It is already disabled. Xtension will not assume that means unused."
+      reason: exposure === "high"
+        ? "It is already disabled but has a high access surface when enabled. This is a strong review candidate."
+        : "It is already disabled. Xtension will not assume that means unused, but it deserves review."
     };
   }
 
@@ -62,11 +81,11 @@ function recommendation(extension) {
     };
   }
 
-  if (exposureLevel(extension) === "high") {
+  if (exposure === "high") {
     return {
       label: "Review access",
       kind: "review",
-      reason: "This extension has broad or sensitive capabilities."
+      reason: "This extension has broad or sensitive capabilities. Keep it only if the workflow value justifies that access."
     };
   }
 
@@ -83,6 +102,23 @@ function recommendation(extension) {
     kind: "neutral",
     reason: "No strong keep/remove evidence yet."
   };
+}
+
+function attentionPriority(extension) {
+  const trial = state.trials[extension.id];
+  const workflow = state.workflowSignals[extension.id];
+  const exposure = exposureLevel(extension);
+
+  if (trial?.outcome === "survived-trial") return 100;
+  if (!extension.enabled && exposure === "high") return 96;
+  if (workflow?.kind === "no-overlap" && exposure === "high") return 92;
+  if (workflow?.kind === "no-overlap") return 86;
+  if (exposure === "high") return 78;
+  if (!extension.enabled) return 72;
+  if (trial?.active) return 68;
+  if (exposure === "medium") return 48;
+  if (trial?.outcome === "needed") return 18;
+  return 30;
 }
 
 function iconFor(extension) {
@@ -105,12 +141,14 @@ function renderStats() {
   const disabled = extensions.length - enabled;
   const highAccess = extensions.filter((item) => exposureLevel(item) === "high").length;
   const trials = Object.values(state.trials).filter((trial) => trial.active).length;
+  const reviews = extensions.filter((item) => recommendation(item).kind === "review").length;
 
   document.querySelector("#stats").innerHTML = [
     ["Installed", extensions.length],
     ["Enabled", enabled],
     ["Disabled", disabled],
     ["High access", highAccess],
+    ["Needs review", reviews],
     ["Trials", trials]
   ]
     .map(([label, value]) => `<article><strong>${value}</strong><span>${label}</span></article>`)
@@ -122,7 +160,10 @@ function matchesFilter(extension) {
   if (state.filter === "disabled") return !extension.enabled;
   if (state.filter === "high-access") return exposureLevel(extension) === "high";
   if (state.filter === "review") return recommendation(extension).kind === "review";
-  if (state.filter === "trial") return Boolean(state.trials[extension.id]?.active);
+  if (state.filter === "trial") {
+    const trial = state.trials[extension.id];
+    return Boolean(trial?.active || trial?.outcome === "survived-trial");
+  }
   return true;
 }
 
@@ -130,10 +171,12 @@ function renderInventory() {
   const container = document.querySelector("#inventory");
   const query = state.query.trim().toLowerCase();
 
-  const visible = state.snapshot.extensions.filter((extension) => {
-    const textMatch = !query || `${extension.name} ${extension.description} ${extension.id}`.toLowerCase().includes(query);
-    return textMatch && matchesFilter(extension);
-  });
+  const visible = state.snapshot.extensions
+    .filter((extension) => {
+      const textMatch = !query || `${extension.name} ${extension.description} ${extension.id}`.toLowerCase().includes(query);
+      return textMatch && matchesFilter(extension);
+    })
+    .sort((a, b) => attentionPriority(b) - attentionPriority(a) || a.name.localeCompare(b.name));
 
   if (visible.length === 0) {
     container.innerHTML = `<div class="empty">No extensions match this view.</div>`;
@@ -154,9 +197,10 @@ function extensionCard(extension) {
   const workflow = state.workflowSignals[extension.id];
   const icon = iconFor(extension);
   const permissionSummary = `${extension.permissions.length} API · ${extension.hostPermissions.length} host`;
+  const priority = attentionPriority(extension);
 
   return `
-    <article class="extension-card" data-extension-id="${escapeHtml(extension.id)}">
+    <article class="extension-card ${rec.kind === "review" ? "needs-review" : ""}" data-extension-id="${escapeHtml(extension.id)}">
       <div class="extension-main">
         <div class="identity">
           ${icon ? `<img src="${escapeHtml(icon)}" alt="" />` : `<div class="fallback-icon">${escapeHtml(extension.name.slice(0, 1).toUpperCase())}</div>`}
@@ -166,7 +210,7 @@ function extensionCard(extension) {
               <span class="state ${extension.enabled ? "enabled" : "disabled"}">${extension.enabled ? "Enabled" : "Disabled"}</span>
             </div>
             <p>${escapeHtml(extension.description || "No description provided.")}</p>
-            <div class="meta">v${escapeHtml(extension.version)} · ${escapeHtml(extension.installType)} · ${permissionSummary}</div>
+            <div class="meta">v${escapeHtml(extension.version)} · ${escapeHtml(extension.installType)} · ${permissionSummary} · attention ${priority}</div>
           </div>
         </div>
         <div class="decision">
@@ -190,6 +234,10 @@ function extensionCard(extension) {
           <section>
             <h3>Workflow relevance evidence</h3>
             ${workflowEvidence(workflow)}
+          </section>
+          <section>
+            <h3>Trial evidence</h3>
+            ${trialEvidence(trial)}
           </section>
           <section>
             <h3>State evidence</h3>
@@ -219,6 +267,20 @@ function workflowEvidence(workflow) {
     return `<p class="muted">No declared host permissions to compare with recent browsing. Relevance must come from other evidence.</p>`;
   }
   return `<p class="muted">${workflow.matchedPages} of ${workflow.totalRecentPages} recent history entries matched its declared sites across ${workflow.matchedHosts} host${workflow.matchedHosts === 1 ? "" : "s"}. This is opportunity/context evidence only.</p>`;
+}
+
+function trialEvidence(trial) {
+  if (!trial) return `<p class="muted">No cleanup trial has been run.</p>`;
+  if (trial.active) {
+    return `<p class="muted">Trial active since ${escapeHtml(formatDate(trial.startedAt))}. Planned end: ${escapeHtml(formatDate(trial.plannedEndAt))}.</p>`;
+  }
+  if (trial.outcome === "survived-trial") {
+    return `<p class="muted">The disable trial completed without a recorded restore. This is strong evidence for removal review.</p>`;
+  }
+  if (trial.outcome === "needed") {
+    return `<p class="muted">This extension was restored before its disable trial completed. Treat that as strong evidence of workflow dependency.</p>`;
+  }
+  return `<p class="muted">Previous trial outcome: ${escapeHtml(trial.outcome || trial.status || "unknown")}.</p>`;
 }
 
 function tokenList(values) {
@@ -281,7 +343,12 @@ async function loadWorkflowSignals() {
     }
 
     if (hasBroadHostAccess(extension)) {
-      signals[extension.id] = { kind: "broad", totalRecentPages: recentPages.length, matchedPages: recentPages.length, matchedHosts: new Set(recentPages.map((url) => url.hostname)).size };
+      signals[extension.id] = {
+        kind: "broad",
+        totalRecentPages: recentPages.length,
+        matchedPages: recentPages.length,
+        matchedHosts: new Set(recentPages.map((url) => url.hostname)).size
+      };
       continue;
     }
 
@@ -298,8 +365,14 @@ async function loadWorkflowSignals() {
     };
   }
 
-  // Deliberately do not persist raw browsing history or the URL list.
+  // Raw browsing history and URL lists are deliberately not persisted or uploaded.
   state.workflowSignals = signals;
+}
+
+async function sendWorker(message) {
+  const response = await chrome.runtime.sendMessage(message);
+  if (response?.error) throw new Error(response.error);
+  return response;
 }
 
 async function handleAction(event) {
@@ -313,38 +386,23 @@ async function handleAction(event) {
     button.disabled = true;
 
     if (action === "trial-disable") {
-      await chrome.management.setEnabled(id, false);
-      state.trials[id] = {
-        active: true,
-        startedAt: Date.now(),
-        plannedEndAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
-        originalVersion: extension.version
-      };
-      await chrome.storage.local.set({ [TRIALS_KEY]: state.trials });
-      showNotice(`${extension.name} is trial-disabled. Re-enable it immediately if your workflow breaks.`);
+      await sendWorker({ type: "trial:start", extensionId: id, days: 7 });
+      showNotice(`${extension.name} is trial-disabled for seven days. Restore it if your workflow breaks.`);
     }
 
     if (action === "enable") {
-      await chrome.management.setEnabled(id, true);
-      if (state.trials[id]?.active) {
-        state.trials[id] = { ...state.trials[id], active: false, endedAt: Date.now(), outcome: "needed" };
-        await chrome.storage.local.set({ [TRIALS_KEY]: state.trials });
-      }
+      await sendWorker({ type: "extension:enable", extensionId: id });
       showNotice(`${extension.name} was enabled.`);
     }
 
     if (action === "end-trial") {
-      state.trials[id] = { ...state.trials[id], active: false, endedAt: Date.now(), outcome: "ended-manually" };
-      await chrome.storage.local.set({ [TRIALS_KEY]: state.trials });
-      showNotice(`Trial ended for ${extension.name}.`);
+      await sendWorker({ type: "trial:end", extensionId: id, outcome: "ended-manually" });
+      showNotice(`Trial ended for ${extension.name}. The extension remains in its current Chrome state.`);
     }
 
     if (action === "uninstall") {
-      await chrome.management.uninstall(id, { showConfirmDialog: true });
-      if (state.trials[id]) {
-        state.trials[id] = { ...state.trials[id], active: false, endedAt: Date.now(), outcome: "uninstalled" };
-        await chrome.storage.local.set({ [TRIALS_KEY]: state.trials });
-      }
+      await sendWorker({ type: "extension:uninstall", extensionId: id });
+      showNotice(`${extension.name} was removed.`);
     }
 
     await loadInventory(true);
@@ -355,17 +413,36 @@ async function handleAction(event) {
   }
 }
 
-async function loadInventory(force = false) {
-  if (force) {
-    state.snapshot = await chrome.runtime.sendMessage({ type: "inventory:refresh" });
-  } else {
-    state.snapshot = await chrome.runtime.sendMessage({ type: "inventory:get" });
+function renderTimeline() {
+  const container = document.querySelector("#timeline");
+  const events = state.timeline.slice(0, 40);
+  if (!events.length) {
+    container.innerHTML = `<div class="empty">No changes recorded yet. Xtension starts learning your extension system from this installation onward.</div>`;
+    return;
   }
-  const storedTrials = await chrome.storage.local.get(TRIALS_KEY);
-  state.trials = storedTrials[TRIALS_KEY] ?? {};
+
+  container.innerHTML = events
+    .map((event) => `
+      <article class="timeline-event kind-${escapeHtml(event.kind)}">
+        <div class="timeline-dot"></div>
+        <div>
+          <div class="timeline-meta">${escapeHtml(relativeTime(event.at))} · ${escapeHtml(event.kind.replaceAll("-", " "))}</div>
+          <strong>${escapeHtml(event.summary)}</strong>
+          ${event.detail ? `<p>${escapeHtml(event.detail)}</p>` : ""}
+        </div>
+      </article>
+    `)
+    .join("");
+}
+
+async function loadInventory(force = false) {
+  state.snapshot = await sendWorker({ type: force ? "inventory:refresh" : "inventory:get" });
+  state.trials = await sendWorker({ type: "trials:get" });
+  state.timeline = await sendWorker({ type: "timeline:get" });
   await loadWorkflowSignals();
   renderStats();
   renderInventory();
+  renderTimeline();
 }
 
 async function configureHistoryButton() {
@@ -379,6 +456,7 @@ async function configureHistoryButton() {
       const alreadyGranted = await chrome.permissions.contains({ permissions: ["history"] });
       if (alreadyGranted) {
         await loadWorkflowSignals();
+        renderStats();
         renderInventory();
         showNotice("Workflow relevance is enabled. Raw browsing history remains local to this browser agent.");
         return;
@@ -389,6 +467,7 @@ async function configureHistoryButton() {
         button.textContent = "Workflow relevance enabled";
         button.classList.add("active");
         await loadWorkflowSignals();
+        renderStats();
         renderInventory();
         showNotice("Workflow relevance enabled. Xtension compared recent browsing locally against declared extension sites; raw history was not stored or uploaded.");
       }
@@ -396,6 +475,24 @@ async function configureHistoryButton() {
       showNotice(error?.message || "Could not request history permission.", true);
     }
   });
+}
+
+function formatDate(timestamp) {
+  if (!timestamp) return "unknown";
+  return new Date(timestamp).toLocaleString();
+}
+
+function relativeTime(timestamp) {
+  if (!timestamp) return "unknown time";
+  const delta = Math.max(0, Date.now() - timestamp);
+  const minutes = Math.floor(delta / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(timestamp).toLocaleDateString();
 }
 
 function showNotice(message, isError = false) {
