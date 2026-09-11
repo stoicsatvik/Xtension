@@ -105,7 +105,7 @@ export function createBridgeStore({ token, initialState }) {
     };
   }
 
-  function enqueueCommand(type, payload = {}, timeoutMs = 15_000) {
+  function enqueueCommand(type, payload = {}, timeoutMs = 40_000) {
     const id = crypto.randomUUID();
     const command = { id, type, payload, createdAt: Date.now() };
     commands.push(command);
@@ -131,12 +131,21 @@ export function createBridgeStore({ token, initialState }) {
     return true;
   }
 
+  async function waitForCommands(waitMs = 0) {
+    const deadline = Date.now() + Math.max(0, Math.min(waitMs, 25_000));
+    while (!commands.length && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    return commands.splice(0, 20);
+  }
+
   return {
     state,
     commands,
     compactStatus,
     enqueueCommand,
     completeCommand,
+    waitForCommands,
     async updateSnapshot(snapshot) {
       state.snapshot = sanitizeSnapshot(snapshot);
       state.lastSyncAt = Date.now();
@@ -169,7 +178,8 @@ export function startLocalBridge(store, { port = Number(process.env.XTENSION_BRI
       }
 
       if (req.method === "GET" && url.pathname === "/v1/commands") {
-        return json(res, 200, { commands: store.takeCommands() });
+        const waitMs = Number(url.searchParams.get("wait") ?? 0);
+        return json(res, 200, { commands: await store.waitForCommands(waitMs) });
       }
 
       const resultMatch = url.pathname.match(/^\/v1\/commands\/([^/]+)\/result$/);
