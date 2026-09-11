@@ -5,4 +5,5 @@ import "./background-onboarding.js";
 import "./background-recovery.js";
 import "./background-install-review.js";
 import "./background-version-history.js";
+import "./background-trial-context.js";
 import "./service-worker.js";
