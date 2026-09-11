@@ -1,0 +1,26 @@
+{
+  "name": "@xtension/mcp",
+  "version": "0.1.0",
+  "description": "Local-first MCP server and Chrome bridge for Xtension.",
+  "type": "module",
+  "bin": {
+    "xtension-mcp": "./src/server.mjs"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "check": "node --check src/server.mjs && node --check src/state-store.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.1.0"
+  },
+  "license": "MIT"
+}
