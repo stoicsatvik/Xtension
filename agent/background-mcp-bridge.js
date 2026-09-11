@@ -1,4 +1,9 @@
 import { LOCAL_EVIDENCE_KEYS } from "./export-policy.js";
+import {
+  findCommandResult,
+  MCP_COMMAND_RESULTS_KEY,
+  rememberCommandResult
+} from "./mcp-command-cache.js";
 
 const MCP_CONFIG_KEY = "xtension.mcp.v1";
 const BRIDGE_ORIGIN = "http://127.0.0.1:43128";
@@ -88,6 +93,39 @@ async function executeCommand(command) {
   }
 }
 
+async function readCachedCommandResult(commandId) {
+  const stored = await chrome.storage.local.get(MCP_COMMAND_RESULTS_KEY);
+  return findCommandResult(stored[MCP_COMMAND_RESULTS_KEY], commandId);
+}
+
+async function persistCommandResult(commandId, result) {
+  const stored = await chrome.storage.local.get(MCP_COMMAND_RESULTS_KEY);
+  const next = rememberCommandResult(stored[MCP_COMMAND_RESULTS_KEY], commandId, result);
+  await chrome.storage.local.set({ [MCP_COMMAND_RESULTS_KEY]: next });
+}
+
+async function executeCommandOnce(command) {
+  const cached = await readCachedCommandResult(command.id);
+  if (cached) return cached;
+
+  let result;
+  try {
+    const value = await executeCommand(command);
+    result = { ok: true, value };
+  } catch (error) {
+    result = {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+
+  // Persist before acknowledging the MCP process. If Chrome or the bridge dies
+  // after the browser action but before the POST succeeds, redelivery replays
+  // this result instead of repeating the browser action.
+  await persistCommandResult(command.id, result);
+  return result;
+}
+
 async function postCommandResult(config, command, result) {
   await bridgeFetch(`/v1/commands/${encodeURIComponent(command.id)}/result`, config, {
     method: "POST",
@@ -102,15 +140,8 @@ async function pollLoop(generation) {
     try {
       const payload = await bridgeFetch("/v1/commands?wait=20000", config);
       for (const command of payload.commands ?? []) {
-        try {
-          const value = await executeCommand(command);
-          await postCommandResult(config, command, { ok: true, value });
-        } catch (error) {
-          await postCommandResult(config, command, {
-            ok: false,
-            error: error instanceof Error ? error.message : String(error)
-          });
-        }
+        const result = await executeCommandOnce(command);
+        await postCommandResult(config, command, result);
       }
       if (payload.commands?.length) await syncNow(config);
     } catch (error) {
