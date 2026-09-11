@@ -37,4 +37,10 @@ jobs:
             echo "Checking $file"
             node --input-type=module --check < "$file"
           done
+      - name: Install Xtension MCP package
+        run: npm --prefix mcp install
+      - name: Test Xtension MCP package
+        run: npm --prefix mcp test
+      - name: Check Xtension MCP package syntax
+        run: npm --prefix mcp run check
       - run: npm run build
