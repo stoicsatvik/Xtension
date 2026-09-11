@@ -1,9 +1,11 @@
 const HISTORY_WINDOW_DAYS = 30;
+const PREFERENCES_KEY = "xtension.preferences.v1";
 
 const state = {
   snapshot: { observedAt: 0, extensions: [] },
   trials: {},
   timeline: [],
+  preferences: {},
   workflowSignals: {},
   query: "",
   filter: "all"
@@ -34,10 +36,15 @@ function exposureLevel(extension) {
   return "low";
 }
 
+function userVerdict(extensionId) {
+  return state.preferences[extensionId]?.verdict ?? null;
+}
+
 function recommendation(extension) {
   const trial = state.trials[extension.id];
   const workflow = state.workflowSignals[extension.id];
   const exposure = exposureLevel(extension);
+  const verdict = userVerdict(extension.id);
 
   if (trial?.active) {
     return {
@@ -63,6 +70,24 @@ function recommendation(extension) {
     };
   }
 
+  if (verdict === "essential") {
+    return {
+      label: exposure === "high" ? "Keep — essential, monitor access" : "Keep — marked essential",
+      kind: "keep",
+      reason: exposure === "high"
+        ? "You marked it essential, but its access surface is broad enough to keep under review when permissions change."
+        : "You explicitly marked this extension essential."
+    };
+  }
+
+  if (verdict === "unnecessary") {
+    return {
+      label: extension.enabled ? "Trial-disable now" : "Remove candidate",
+      kind: "review",
+      reason: "You marked this extension unnecessary. Xtension still requires a deliberate user action before disabling or removing it."
+    };
+  }
+
   if (!extension.enabled) {
     return {
       label: "Review for removal",
@@ -83,9 +108,19 @@ function recommendation(extension) {
 
   if (exposure === "high") {
     return {
-      label: "Review access",
+      label: verdict === "optional" ? "Optional + high access — review" : "Review access",
       kind: "review",
-      reason: "This extension has broad or sensitive capabilities. Keep it only if the workflow value justifies that access."
+      reason: verdict === "optional"
+        ? "You marked it optional and it has broad or sensitive capabilities, making it a good cleanup-test candidate."
+        : "This extension has broad or sensitive capabilities. Keep it only if the workflow value justifies that access."
+    };
+  }
+
+  if (verdict === "optional") {
+    return {
+      label: "Optional",
+      kind: "neutral",
+      reason: "You marked this extension optional. Xtension will surface stronger evidence if its relevance or access changes."
     };
   }
 
@@ -108,16 +143,21 @@ function attentionPriority(extension) {
   const trial = state.trials[extension.id];
   const workflow = state.workflowSignals[extension.id];
   const exposure = exposureLevel(extension);
+  const verdict = userVerdict(extension.id);
 
   if (trial?.outcome === "survived-trial") return 100;
+  if (verdict === "unnecessary" && exposure === "high") return 99;
+  if (verdict === "unnecessary") return 97;
   if (!extension.enabled && exposure === "high") return 96;
   if (workflow?.kind === "no-overlap" && exposure === "high") return 92;
+  if (verdict === "optional" && exposure === "high") return 90;
   if (workflow?.kind === "no-overlap") return 86;
-  if (exposure === "high") return 78;
+  if (exposure === "high") return verdict === "essential" ? 60 : 78;
   if (!extension.enabled) return 72;
   if (trial?.active) return 68;
-  if (exposure === "medium") return 48;
-  if (trial?.outcome === "needed") return 18;
+  if (exposure === "medium") return verdict === "essential" ? 22 : 48;
+  if (trial?.outcome === "needed" || verdict === "essential") return 12;
+  if (verdict === "optional") return 36;
   return 30;
 }
 
@@ -195,6 +235,7 @@ function extensionCard(extension) {
   const rec = recommendation(extension);
   const trial = state.trials[extension.id];
   const workflow = state.workflowSignals[extension.id];
+  const verdict = userVerdict(extension.id);
   const icon = iconFor(extension);
   const permissionSummary = `${extension.permissions.length} API · ${extension.hostPermissions.length} host`;
   const priority = attentionPriority(extension);
@@ -208,6 +249,7 @@ function extensionCard(extension) {
             <div class="name-row">
               <h2>${escapeHtml(extension.name)}</h2>
               <span class="state ${extension.enabled ? "enabled" : "disabled"}">${extension.enabled ? "Enabled" : "Disabled"}</span>
+              ${verdict ? `<span class="verdict ${escapeHtml(verdict)}">${escapeHtml(verdict)}</span>` : ""}
             </div>
             <p>${escapeHtml(extension.description || "No description provided.")}</p>
             <div class="meta">v${escapeHtml(extension.version)} · ${escapeHtml(extension.installType)} · ${permissionSummary} · attention ${priority}</div>
@@ -238,6 +280,16 @@ function extensionCard(extension) {
           <section>
             <h3>Trial evidence</h3>
             ${trialEvidence(trial)}
+          </section>
+          <section>
+            <h3>Your verdict</h3>
+            <p class="muted">${verdict ? `Marked ${escapeHtml(verdict)}. Your explicit judgment is treated as strong local evidence.` : "No explicit judgment yet."}</p>
+            <div class="verdict-actions">
+              <button class="mini secondary" data-action="mark-essential" data-id="${extension.id}">Essential</button>
+              <button class="mini secondary" data-action="mark-optional" data-id="${extension.id}">Optional</button>
+              <button class="mini secondary" data-action="mark-unnecessary" data-id="${extension.id}">Unnecessary</button>
+              ${verdict ? `<button class="mini secondary" data-action="clear-verdict" data-id="${extension.id}">Clear</button>` : ""}
+            </div>
           </section>
           <section>
             <h3>State evidence</h3>
@@ -365,7 +417,6 @@ async function loadWorkflowSignals() {
     };
   }
 
-  // Raw browsing history and URL lists are deliberately not persisted or uploaded.
   state.workflowSignals = signals;
 }
 
@@ -373,6 +424,15 @@ async function sendWorker(message) {
   const response = await chrome.runtime.sendMessage(message);
   if (response?.error) throw new Error(response.error);
   return response;
+}
+
+async function saveVerdict(extensionId, verdict) {
+  if (verdict) {
+    state.preferences[extensionId] = { verdict, updatedAt: Date.now() };
+  } else {
+    delete state.preferences[extensionId];
+  }
+  await chrome.storage.local.set({ [PREFERENCES_KEY]: state.preferences });
 }
 
 async function handleAction(event) {
@@ -405,7 +465,27 @@ async function handleAction(event) {
       showNotice(`${extension.name} was removed.`);
     }
 
-    await loadInventory(true);
+    if (action === "mark-essential") {
+      await saveVerdict(id, "essential");
+      showNotice(`${extension.name} marked essential. Xtension will still surface meaningful permission changes.`);
+    }
+
+    if (action === "mark-optional") {
+      await saveVerdict(id, "optional");
+      showNotice(`${extension.name} marked optional.`);
+    }
+
+    if (action === "mark-unnecessary") {
+      await saveVerdict(id, "unnecessary");
+      showNotice(`${extension.name} marked unnecessary. Xtension will move it up the cleanup queue.`);
+    }
+
+    if (action === "clear-verdict") {
+      await saveVerdict(id, null);
+      showNotice(`Your verdict for ${extension.name} was cleared.`);
+    }
+
+    await loadInventory(["trial-disable", "enable", "uninstall"].includes(action));
   } catch (error) {
     showNotice(error?.message || "Chrome did not complete that action.", true);
   } finally {
@@ -439,6 +519,8 @@ async function loadInventory(force = false) {
   state.snapshot = await sendWorker({ type: force ? "inventory:refresh" : "inventory:get" });
   state.trials = await sendWorker({ type: "trials:get" });
   state.timeline = await sendWorker({ type: "timeline:get" });
+  const storedPreferences = await chrome.storage.local.get(PREFERENCES_KEY);
+  state.preferences = storedPreferences[PREFERENCES_KEY] ?? {};
   await loadWorkflowSignals();
   renderStats();
   renderInventory();
