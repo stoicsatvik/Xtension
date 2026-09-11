@@ -20,7 +20,9 @@ export type AnalysisReport = {
   version: string;
   manifestVersion: number | null;
   permissions: string[];
+  optionalPermissions: string[];
   hostPermissions: string[];
+  optionalHostPermissions: string[];
   contentScriptMatches: string[];
   capabilities: Capability[];
   staticSignals: StaticSignal[];
@@ -56,10 +58,7 @@ export function extractExtensionId(input: string): string | null {
 
   try {
     const url = new URL(value);
-    const allowedHosts = new Set([
-      "chromewebstore.google.com",
-      "chrome.google.com",
-    ]);
+    const allowedHosts = new Set(["chromewebstore.google.com", "chrome.google.com"]);
     if (!allowedHosts.has(url.hostname)) return null;
 
     const segments = url.pathname.split("/").filter(Boolean);
@@ -78,8 +77,6 @@ export function chromeUpdateUrl(id: string): string {
 
 export function stripCrxHeader(input: Uint8Array): Uint8Array {
   if (input.length < 4) throw new Error("Package is too small to be a CRX/ZIP file.");
-
-  // ZIP files start with PK. Keeping this path makes local fixtures and future uploads easy.
   if (input[0] === 0x50 && input[1] === 0x4b) return input;
 
   const magic = String.fromCharCode(...input.slice(0, 4));
@@ -205,8 +202,7 @@ const STATIC_RULES: Array<{ label: string; pattern: RegExp }> = [
 ];
 
 function countMatches(text: string, pattern: RegExp): number {
-  const matches = text.match(pattern);
-  return matches?.length ?? 0;
+  return text.match(pattern)?.length ?? 0;
 }
 
 function normalizeManifestStrings(values: unknown): string[] {
@@ -230,21 +226,21 @@ function buildCapabilities(
   if (allHostPatterns.includes("<all_urls>")) {
     capabilities.push({
       title: "Can run on or access all website origins",
-      detail: "The manifest includes <all_urls>. The exact actions possible still depend on the extension's APIs and code.",
+      detail: "The required manifest access includes <all_urls>. The exact actions possible still depend on the extension's APIs and code.",
       severity: "high",
       source: "host:<all_urls>",
     });
   } else if (allHostPatterns.some((pattern) => pattern.includes("*://*/*"))) {
     capabilities.push({
       title: "Requests broad website access",
-      detail: "The manifest includes a wildcard host pattern that covers a very broad set of websites.",
+      detail: "The required manifest access includes a wildcard host pattern covering a very broad set of websites.",
       severity: "high",
       source: "host:wildcard",
     });
   } else if (allHostPatterns.length > 0) {
     capabilities.push({
       title: `Requests access to ${allHostPatterns.length} declared host pattern${allHostPatterns.length === 1 ? "" : "s"}`,
-      detail: "Host permissions and content-script match patterns define which sites the extension can interact with.",
+      detail: "Required host permissions and content-script match patterns define which sites the extension can interact with automatically or directly.",
       severity: allHostPatterns.length > 10 ? "medium" : "low",
       source: "host:declared",
     });
@@ -259,9 +255,6 @@ function extractExternalHosts(text: string): string[] {
   for (const match of text.matchAll(urlPattern)) {
     const host = match[1]?.toLowerCase();
     if (!host) continue;
-    if (host.endsWith("googleapis.com") || host.endsWith("gstatic.com")) {
-      // Keep Google endpoints too; they are still external network destinations.
-    }
     hosts.add(host);
     if (hosts.size >= 100) break;
   }
@@ -286,10 +279,8 @@ export async function analyzePackage(id: string, crxBytes: Uint8Array): Promise<
 
   const permissions = normalizeManifestStrings(manifest.permissions);
   const optionalPermissions = normalizeManifestStrings(manifest.optional_permissions);
-  const hostPermissions = [
-    ...normalizeManifestStrings(manifest.host_permissions),
-    ...normalizeManifestStrings(manifest.optional_host_permissions),
-  ];
+  const hostPermissions = normalizeManifestStrings(manifest.host_permissions);
+  const optionalHostPermissions = normalizeManifestStrings(manifest.optional_host_permissions);
   const contentScriptMatches = (manifest.content_scripts ?? []).flatMap((script) =>
     normalizeManifestStrings(script.matches),
   );
@@ -321,14 +312,12 @@ export async function analyzePackage(id: string, crxBytes: Uint8Array): Promise<
     name: manifest.name ?? "Unnamed extension",
     version: manifest.version ?? "unknown",
     manifestVersion: manifest.manifest_version ?? null,
-    permissions: [...new Set([...permissions, ...optionalPermissions])].sort(),
+    permissions: [...new Set(permissions)].sort(),
+    optionalPermissions: [...new Set(optionalPermissions)].sort(),
     hostPermissions: [...new Set(hostPermissions)].sort(),
+    optionalHostPermissions: [...new Set(optionalHostPermissions)].sort(),
     contentScriptMatches: [...new Set(contentScriptMatches)].sort(),
-    capabilities: buildCapabilities(
-      [...new Set([...permissions, ...optionalPermissions])],
-      hostPermissions,
-      contentScriptMatches,
-    ),
+    capabilities: buildCapabilities(permissions, hostPermissions, contentScriptMatches),
     staticSignals: [...staticCounts.entries()]
       .map(([label, matches]) => ({ label, matches }))
       .sort((a, b) => b.matches - a.matches),
@@ -339,6 +328,6 @@ export async function analyzePackage(id: string, crxBytes: Uint8Array): Promise<
       jsFilesScanned,
     },
     disclaimer:
-      "Xtension reports declared capabilities and static code references. These findings do not prove that an extension collects data, abuses a permission, or behaves maliciously.",
+      "Xtension reports declared capabilities and static code references. Optional permissions are shown separately because they may not be granted. Findings do not prove that an extension collects data, abuses a permission, or behaves maliciously.",
   };
 }
