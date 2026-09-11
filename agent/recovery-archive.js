@@ -1,23 +1,6 @@
 const REMOVED_KEY = "xtension.removed.v1";
 const MAX_REMOVED = 100;
 
-const currentById = new Map();
-
-function normalize(item) {
-  return {
-    id: item.id,
-    name: item.name,
-    shortName: item.shortName ?? null,
-    description: item.description ?? "",
-    version: item.version ?? null,
-    homepageUrl: item.homepageUrl ?? null,
-    installType: item.installType ?? null,
-    permissions: [...new Set(item.permissions ?? [])].sort(),
-    hostPermissions: [...new Set(item.hostPermissions ?? [])].sort(),
-    icons: item.icons ?? []
-  };
-}
-
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -42,42 +25,9 @@ async function writeArchive(items) {
   return next;
 }
 
-async function captureCurrentInventory() {
-  const self = await chrome.management.getSelf();
-  const all = await chrome.management.getAll();
-  currentById.clear();
-  for (const item of all) {
-    if (item.id === self.id || item.type !== "extension") continue;
-    currentById.set(item.id, normalize(item));
-  }
-}
-
-async function archiveRemoval(id) {
-  const prior = currentById.get(id);
-  if (!prior) return;
-
-  const archive = await readArchive();
-  const record = {
-    ...prior,
-    removedAt: Date.now(),
-    storeUrl: storeUrl(id)
-  };
-  const next = [record, ...archive.filter((item) => item.id !== id)];
-  await writeArchive(next);
-  currentById.delete(id);
-  await renderArchive();
-}
-
-async function removeRecoveredRecord(id) {
-  const archive = await readArchive();
-  await writeArchive(archive.filter((item) => item.id !== id));
-  await renderArchive();
-}
-
 async function forgetRecord(id) {
   const archive = await readArchive();
   await writeArchive(archive.filter((item) => item.id !== id));
-  await renderArchive();
 }
 
 function bestIcon(record) {
@@ -145,22 +95,16 @@ async function renderArchive() {
   }).join("");
 
   container.querySelectorAll("[data-forget-removed]").forEach((button) => {
-    button.addEventListener("click", () => void forgetRecord(button.dataset.forgetRemoved));
+    button.addEventListener("click", async () => {
+      await forgetRecord(button.dataset.forgetRemoved);
+    });
   });
 }
 
-chrome.management.onUninstalled.addListener((id) => {
-  void archiveRemoval(id).catch((error) => console.error("Xtension recovery archive failed", error));
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === "local" && changes[REMOVED_KEY]) {
+    void renderArchive().catch((error) => console.error("Xtension recovery archive render failed", error));
+  }
 });
 
-chrome.management.onInstalled.addListener((item) => {
-  if (item.type !== "extension") return;
-  currentById.set(item.id, normalize(item));
-  void removeRecoveredRecord(item.id).catch((error) => console.error("Xtension recovery cleanup failed", error));
-});
-
-chrome.management.onEnabled.addListener((item) => currentById.set(item.id, normalize(item)));
-chrome.management.onDisabled.addListener((item) => currentById.set(item.id, normalize(item)));
-
-await captureCurrentInventory();
 await renderArchive();
