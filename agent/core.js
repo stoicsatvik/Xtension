@@ -58,6 +58,11 @@ export function exposureLevel(extension) {
   return exposureAssessment(extension).level;
 }
 
+export function observedStateAgeDays(extension, now = Date.now()) {
+  if (!extension?.observedStateSince || !Number.isFinite(extension.observedStateSince)) return 0;
+  return Math.max(0, (now - extension.observedStateSince) / (24 * 60 * 60 * 1000));
+}
+
 export function parseWebUrl(value) {
   try {
     const url = new URL(value);
@@ -172,7 +177,13 @@ export function findPotentialRedundancies(extensions) {
 }
 
 export function buildRecommendation(extension, evidence = {}) {
-  const { trial = null, workflow = null, verdict = null, redundancy = null } = evidence;
+  const {
+    trial = null,
+    workflow = null,
+    verdict = null,
+    redundancy = null,
+    stateAgeDays = observedStateAgeDays(extension)
+  } = evidence;
   const exposure = exposureLevel(extension);
 
   if (trial?.active) {
@@ -214,6 +225,14 @@ export function buildRecommendation(extension, evidence = {}) {
       label: extension.enabled ? "Trial-disable now" : "Remove candidate",
       kind: "review",
       reason: "You marked this extension unnecessary. Xtension still requires a deliberate user action before disabling or removing it."
+    };
+  }
+
+  if (!extension.enabled && stateAgeDays >= 30) {
+    return {
+      label: "Long-disabled — review removal",
+      kind: "review",
+      reason: `Xtension has continuously observed this extension disabled for about ${Math.floor(stateAgeDays)} days. That is useful cleanup evidence, but not proof it will never be needed.`
     };
   }
 
@@ -277,18 +296,26 @@ export function buildRecommendation(extension, evidence = {}) {
 }
 
 export function attentionPriority(extension, evidence = {}) {
-  const { trial = null, workflow = null, verdict = null, redundancy = null } = evidence;
+  const {
+    trial = null,
+    workflow = null,
+    verdict = null,
+    redundancy = null,
+    stateAgeDays = observedStateAgeDays(extension)
+  } = evidence;
   const exposure = exposureLevel(extension);
 
   if (trial?.outcome === "survived-trial") return 100;
   if (verdict === "unnecessary" && exposure === "high") return 99;
   if (verdict === "unnecessary") return 97;
-  if (!extension.enabled && exposure === "high") return 96;
-  if (workflow?.kind === "no-overlap" && exposure === "high") return 92;
-  if (verdict === "optional" && exposure === "high") return 90;
-  if (workflow?.kind === "no-overlap") return 86;
-  if (exposure === "high") return verdict === "essential" ? 60 : 78;
-  if (!extension.enabled) return 72;
+  if (!extension.enabled && stateAgeDays >= 30 && exposure === "high") return 96;
+  if (!extension.enabled && stateAgeDays >= 30) return 90;
+  if (!extension.enabled && exposure === "high") return 88;
+  if (workflow?.kind === "no-overlap" && exposure === "high") return 86;
+  if (verdict === "optional" && exposure === "high") return 84;
+  if (workflow?.kind === "no-overlap") return 80;
+  if (exposure === "high") return verdict === "essential" ? 60 : 76;
+  if (!extension.enabled) return 70;
   if (trial?.active) return 68;
   if (redundancy && verdict !== "essential") return 56;
   if (exposure === "medium") return verdict === "essential" ? 22 : 48;
