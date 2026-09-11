@@ -1,11 +1,10 @@
-const INVENTORY_KEY = "xtension.inventory.v1";
 const TRIALS_KEY = "xtension.trials.v1";
 const HISTORY_WINDOW_DAYS = 30;
 
 const state = {
   snapshot: { observedAt: 0, extensions: [] },
   trials: {},
-  siteVisits: null,
+  workflowSignals: {},
   query: "",
   filter: "all"
 };
@@ -37,10 +36,53 @@ function exposureLevel(extension) {
 
 function recommendation(extension) {
   const trial = state.trials[extension.id];
-  if (trial?.active) return { label: "Trial disabled", kind: "trial", reason: "Testing whether your workflow actually depends on it." };
-  if (!extension.enabled) return { label: "Review for removal", kind: "review", reason: "It is already disabled. Xtension will not assume that means unused." };
-  if (exposureLevel(extension) === "high") return { label: "Review access", kind: "review", reason: "This extension has broad or sensitive capabilities." };
-  return { label: "Assess relevance", kind: "neutral", reason: "No strong keep/remove evidence yet." };
+  const workflow = state.workflowSignals[extension.id];
+
+  if (trial?.active) {
+    return {
+      label: "Trial disabled",
+      kind: "trial",
+      reason: "Testing whether your workflow actually depends on it."
+    };
+  }
+
+  if (!extension.enabled) {
+    return {
+      label: "Review for removal",
+      kind: "review",
+      reason: "It is already disabled. Xtension will not assume that means unused."
+    };
+  }
+
+  if (workflow?.kind === "no-overlap") {
+    return {
+      label: "Trial-disable candidate",
+      kind: "review",
+      reason: `No recent page overlap found in the last ${HISTORY_WINDOW_DAYS} days for its declared sites. This is context evidence, not proof of non-use.`
+    };
+  }
+
+  if (exposureLevel(extension) === "high") {
+    return {
+      label: "Review access",
+      kind: "review",
+      reason: "This extension has broad or sensitive capabilities."
+    };
+  }
+
+  if (workflow?.kind === "overlap") {
+    return {
+      label: "Context overlap detected",
+      kind: "neutral",
+      reason: `Its declared sites overlapped ${workflow.matchedHosts} recently visited host${workflow.matchedHosts === 1 ? "" : "s"}. This does not prove the extension executed.`
+    };
+  }
+
+  return {
+    label: "Assess relevance",
+    kind: "neutral",
+    reason: "No strong keep/remove evidence yet."
+  };
 }
 
 function iconFor(extension) {
@@ -109,6 +151,7 @@ function extensionCard(extension) {
   const exposure = exposureLevel(extension);
   const rec = recommendation(extension);
   const trial = state.trials[extension.id];
+  const workflow = state.workflowSignals[extension.id];
   const icon = iconFor(extension);
   const permissionSummary = `${extension.permissions.length} API · ${extension.hostPermissions.length} host`;
 
@@ -144,6 +187,14 @@ function extensionCard(extension) {
             <h3>Website access</h3>
             ${tokenList(extension.hostPermissions)}
           </section>
+          <section>
+            <h3>Workflow relevance evidence</h3>
+            ${workflowEvidence(workflow)}
+          </section>
+          <section>
+            <h3>State evidence</h3>
+            <p class="muted">${extension.enabled ? "Currently enabled." : `Currently disabled${extension.disabledReason ? ` (${escapeHtml(extension.disabledReason)})` : ""}.`} Install type: ${escapeHtml(extension.installType)}.</p>
+          </section>
         </div>
         <div class="card-actions">
           ${extension.enabled
@@ -157,9 +208,98 @@ function extensionCard(extension) {
   `;
 }
 
+function workflowEvidence(workflow) {
+  if (!workflow) {
+    return `<p class="muted">Workflow mode is off or this extension has no usable host-access signal.</p>`;
+  }
+  if (workflow.kind === "broad") {
+    return `<p class="muted">This extension declares broad web access, so site overlap cannot distinguish usefulness. Xtension will not treat broad eligibility as usage.</p>`;
+  }
+  if (workflow.kind === "no-hosts") {
+    return `<p class="muted">No declared host permissions to compare with recent browsing. Relevance must come from other evidence.</p>`;
+  }
+  return `<p class="muted">${workflow.matchedPages} of ${workflow.totalRecentPages} recent history entries matched its declared sites across ${workflow.matchedHosts} host${workflow.matchedHosts === 1 ? "" : "s"}. This is opportunity/context evidence only.</p>`;
+}
+
 function tokenList(values) {
   if (!values?.length) return `<p class="muted">None declared.</p>`;
   return `<div class="tokens">${values.map((value) => `<code>${escapeHtml(value)}</code>`).join("")}</div>`;
+}
+
+function parseWebUrl(value) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url;
+  } catch {
+    return null;
+  }
+}
+
+function hostPatternMatchesUrl(pattern, url) {
+  if (pattern === "<all_urls>" || pattern.includes("*://*/*")) return true;
+
+  const match = pattern.match(/^(\*|https?|http):\/\/([^/]+)\//i);
+  if (!match) return false;
+
+  const scheme = match[1].toLowerCase();
+  const hostPattern = match[2].toLowerCase();
+  if (scheme !== "*" && `${scheme}:` !== url.protocol) return false;
+  if (hostPattern === "*") return true;
+
+  if (hostPattern.startsWith("*.")) {
+    const root = hostPattern.slice(2);
+    return url.hostname === root || url.hostname.endsWith(`.${root}`);
+  }
+
+  return url.hostname === hostPattern;
+}
+
+async function loadWorkflowSignals() {
+  const granted = await chrome.permissions.contains({ permissions: ["history"] });
+  if (!granted) {
+    state.workflowSignals = {};
+    return;
+  }
+
+  const startTime = Date.now() - HISTORY_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  const historyItems = await chrome.history.search({
+    text: "",
+    startTime,
+    maxResults: 5000
+  });
+
+  const recentPages = historyItems
+    .map((item) => parseWebUrl(item.url || ""))
+    .filter(Boolean);
+
+  const signals = {};
+  for (const extension of state.snapshot.extensions) {
+    if (!extension.hostPermissions.length) {
+      signals[extension.id] = { kind: "no-hosts", totalRecentPages: recentPages.length, matchedPages: 0, matchedHosts: 0 };
+      continue;
+    }
+
+    if (hasBroadHostAccess(extension)) {
+      signals[extension.id] = { kind: "broad", totalRecentPages: recentPages.length, matchedPages: recentPages.length, matchedHosts: new Set(recentPages.map((url) => url.hostname)).size };
+      continue;
+    }
+
+    const matching = recentPages.filter((url) =>
+      extension.hostPermissions.some((pattern) => hostPatternMatchesUrl(pattern, url))
+    );
+    const matchedHosts = new Set(matching.map((url) => url.hostname)).size;
+
+    signals[extension.id] = {
+      kind: matching.length > 0 ? "overlap" : "no-overlap",
+      totalRecentPages: recentPages.length,
+      matchedPages: matching.length,
+      matchedHosts
+    };
+  }
+
+  // Deliberately do not persist raw browsing history or the URL list.
+  state.workflowSignals = signals;
 }
 
 async function handleAction(event) {
@@ -223,6 +363,7 @@ async function loadInventory(force = false) {
   }
   const storedTrials = await chrome.storage.local.get(TRIALS_KEY);
   state.trials = storedTrials[TRIALS_KEY] ?? {};
+  await loadWorkflowSignals();
   renderStats();
   renderInventory();
 }
@@ -237,14 +378,19 @@ async function configureHistoryButton() {
     try {
       const alreadyGranted = await chrome.permissions.contains({ permissions: ["history"] });
       if (alreadyGranted) {
+        await loadWorkflowSignals();
+        renderInventory();
         showNotice("Workflow relevance is enabled. Raw browsing history remains local to this browser agent.");
         return;
       }
+
       const accepted = await chrome.permissions.request({ permissions: ["history"] });
       if (accepted) {
         button.textContent = "Workflow relevance enabled";
         button.classList.add("active");
-        showNotice("Workflow relevance enabled. Site-overlap analysis is the next module; history data will stay local.");
+        await loadWorkflowSignals();
+        renderInventory();
+        showNotice("Workflow relevance enabled. Xtension compared recent browsing locally against declared extension sites; raw history was not stored or uploaded.");
       }
     } catch (error) {
       showNotice(error?.message || "Could not request history permission.", true);
