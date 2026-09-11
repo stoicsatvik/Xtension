@@ -5,7 +5,8 @@ import {
   deriveWorkflowSignals,
   exposureAssessment,
   exposureLevel,
-  findPotentialRedundancies
+  findPotentialRedundancies,
+  observedStateAgeDays
 } from "./core.js";
 
 const PREFERENCES_KEY = "xtension.preferences.v1";
@@ -14,6 +15,7 @@ const state = {
   snapshot: { observedAt: 0, extensions: [] },
   trials: {},
   timeline: [],
+  alerts: [],
   preferences: {},
   workflowSignals: {},
   redundancySignals: {},
@@ -30,7 +32,8 @@ function evidenceFor(extension) {
     trial: state.trials[extension.id] ?? null,
     workflow: state.workflowSignals[extension.id] ?? null,
     verdict: userVerdict(extension.id),
-    redundancy: state.redundancySignals[extension.id] ?? null
+    redundancy: state.redundancySignals[extension.id] ?? null,
+    stateAgeDays: observedStateAgeDays(extension)
   };
 }
 
@@ -64,6 +67,7 @@ function renderStats() {
   const trials = Object.values(state.trials).filter((trial) => trial.active).length;
   const reviews = extensions.filter((item) => recommendation(item).kind === "review").length;
   const overlaps = Object.keys(state.redundancySignals).length;
+  const unreadAlerts = state.alerts.filter((alert) => !alert.seen).length;
 
   document.querySelector("#stats").innerHTML = [
     ["Installed", extensions.length],
@@ -71,6 +75,7 @@ function renderStats() {
     ["Disabled", disabled],
     ["High access", highAccess],
     ["Needs review", reviews],
+    ["Access changes", unreadAlerts],
     ["Overlap hints", overlaps],
     ["Trials", trials]
   ]
@@ -124,6 +129,7 @@ function extensionCard(extension) {
   const icon = iconFor(extension);
   const permissionSummary = `${extension.permissions.length} API · ${extension.hostPermissions.length} host`;
   const priority = attentionPriority(extension);
+  const stateAgeDays = observedStateAgeDays(extension);
 
   return `
     <article class="extension-card ${rec.kind === "review" ? "needs-review" : ""}" data-extension-id="${escapeHtml(extension.id)}">
@@ -186,7 +192,7 @@ function extensionCard(extension) {
           </section>
           <section>
             <h3>State evidence</h3>
-            <p class="muted">${extension.enabled ? "Currently enabled." : `Currently disabled${extension.disabledReason ? ` (${escapeHtml(extension.disabledReason)})` : ""}.`} Install type: ${escapeHtml(extension.installType)}.</p>
+            <p class="muted">${extension.enabled ? "Currently enabled." : `Currently disabled${extension.disabledReason ? ` (${escapeHtml(extension.disabledReason)})` : ""}.`} Xtension has continuously observed this state for ${escapeHtml(formatDurationDays(stateAgeDays))}. Install type: ${escapeHtml(extension.installType)}.</p>
           </section>
         </div>
         <div class="card-actions">
@@ -339,6 +345,30 @@ async function handleAction(event) {
   }
 }
 
+function renderAlerts() {
+  const section = document.querySelector("#alertsSection");
+  const container = document.querySelector("#alerts");
+  const unread = state.alerts.filter((alert) => !alert.seen);
+
+  section.hidden = unread.length === 0;
+  if (!unread.length) {
+    container.innerHTML = "";
+    return;
+  }
+
+  container.innerHTML = unread
+    .map((alert) => `
+      <article class="alert-card severity-${escapeHtml(alert.severity)}">
+        <div>
+          <div class="alert-meta">${escapeHtml(alert.severity)} · ${escapeHtml(relativeTime(alert.at))}</div>
+          <strong>${escapeHtml(alert.summary)}</strong>
+          ${alert.detail ? `<p>${escapeHtml(alert.detail)}</p>` : ""}
+        </div>
+      </article>
+    `)
+    .join("");
+}
+
 function renderTimeline() {
   const container = document.querySelector("#timeline");
   const events = state.timeline.slice(0, 40);
@@ -365,11 +395,13 @@ async function loadInventory(force = false) {
   state.snapshot = await sendWorker({ type: force ? "inventory:refresh" : "inventory:get" });
   state.trials = await sendWorker({ type: "trials:get" });
   state.timeline = await sendWorker({ type: "timeline:get" });
+  state.alerts = await sendWorker({ type: "alerts:get" });
   const storedPreferences = await chrome.storage.local.get(PREFERENCES_KEY);
   state.preferences = storedPreferences[PREFERENCES_KEY] ?? {};
   state.redundancySignals = findPotentialRedundancies(state.snapshot.extensions);
   await loadWorkflowSignals();
   renderStats();
+  renderAlerts();
   renderInventory();
   renderTimeline();
 }
@@ -411,6 +443,12 @@ function formatDate(timestamp) {
   return new Date(timestamp).toLocaleString();
 }
 
+function formatDurationDays(days) {
+  if (!Number.isFinite(days) || days < 1 / 24) return "less than an hour";
+  if (days < 1) return `${Math.max(1, Math.floor(days * 24))}h`;
+  return `${Math.floor(days)}d`;
+}
+
 function relativeTime(timestamp) {
   if (!timestamp) return "unknown time";
   const delta = Math.max(0, Date.now() - timestamp);
@@ -439,6 +477,16 @@ document.querySelector("#searchInput").addEventListener("input", (event) => {
 document.querySelector("#filterSelect").addEventListener("change", (event) => {
   state.filter = event.target.value;
   renderInventory();
+});
+document.querySelector("#markAlertsButton").addEventListener("click", async () => {
+  try {
+    state.alerts = await sendWorker({ type: "alerts:mark-seen" });
+    renderStats();
+    renderAlerts();
+    showNotice("Access-change alerts marked reviewed. The underlying change history remains in the local timeline.");
+  } catch (error) {
+    showNotice(error?.message || "Could not mark alerts reviewed.", true);
+  }
 });
 
 await configureHistoryButton();
