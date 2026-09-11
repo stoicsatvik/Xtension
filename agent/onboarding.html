@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Welcome to Xtension</title>
+    <link rel="stylesheet" href="dashboard.css" />
+    <link rel="stylesheet" href="onboarding.css" />
+  </head>
+  <body>
+    <main class="onboarding-shell">
+      <header>
+        <div class="eyebrow">XTENSION CONTROL PLANE</div>
+        <h1>Your extensions should justify their place in your browser.</h1>
+        <p>Xtension inventories what is installed, explains capability exposure, tracks access changes, and helps you run reversible cleanup experiments. It does not invent usage telemetry.</p>
+      </header>
+
+      <section class="onboarding-grid">
+        <article>
+          <div class="step">01</div>
+          <h2>Why “manage extensions”?</h2>
+          <p>Xtension needs Chrome's <code>management</code> permission to see installed extensions, including disabled ones, read their declared permissions, and perform actions you explicitly request such as enable, disable, or uninstall.</p>
+          <strong>Xtension never silently disables or removes another extension.</strong>
+        </article>
+        <article>
+          <div class="step">02</div>
+          <h2>Local by default</h2>
+          <p>Your inventory, verdicts, notes, disable-trial outcomes, alerts, recovery records, and locally observed version history live in Chrome's local extension storage.</p>
+          <strong>Raw browsing history is not persisted by Xtension.</strong>
+        </article>
+        <article>
+          <div class="step">03</div>
+          <h2>Workflow relevance is optional</h2>
+          <p>Base mode does not require browsing history. If you later enable workflow relevance, Chrome asks for <code>history</code> permission and Xtension compares recent URLs locally against declared extension site scope.</p>
+          <strong>Site overlap is context evidence, not proof an extension executed.</strong>
+        </article>
+        <article>
+          <div class="step">04</div>
+          <h2>Cleanup stays reversible</h2>
+          <p>Use 7-day or 30-day Trial Disable instead of guessing. Re-enabling during a trial becomes dependency evidence. Surviving a trial becomes cleanup evidence whose confidence depends on duration.</p>
+          <strong>Trial completion never triggers automatic uninstall.</strong>
+        </article>
+      </section>
+
+      <section class="trust-box">
+        <div>
+          <div class="eyebrow">THE RULE</div>
+          <h2>Capabilities, relevance, and intent are different things.</h2>
+          <p>A powerful extension can be essential. A harmless extension can still be useless clutter. Xtension keeps those dimensions separate instead of compressing your browser into a theatrical 83/100 score.</p>
+        </div>
+      </section>
+
+      <div class="onboarding-actions">
+        <button id="auditButton">Start guided audit</button>
+        <button id="dashboardButton" class="secondary">Open dashboard</button>
+      </div>
+    </main>
+    <script type="module" src="onboarding.js"></script>
+  </body>
+</html>
