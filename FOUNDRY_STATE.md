@@ -11,14 +11,15 @@ Local-first control plane for installed browser extensions: inventory, capabilit
 
 ## Evidence frontier
 - Main head at branch creation: `1218d89288605f42d3443e1a3fb19bd92731c307`.
-- CI workflow exists for pull requests and main, but no pull-request workflow run is attached to that exact main head through the connector.
-- Existing CI runs unit tests, MV3 manifest/CSP checks, selected agent module syntax checks, MCP package tests/checks/pack verification, and the Next.js build.
-- This branch adds `npm run typecheck` as an explicit CI contract because `package.json` defines it but the workflow previously did not execute it.
+- Validated branch implementation head: `d7fb6c8302a4009149dea234679159d17d6d537d`.
+- Exact-head GitHub Actions CI run `35178354084`: SUCCESS.
+- The successful `test-and-build` job ran `npm install`, `npm run typecheck`, `npm test`, Chrome agent manifest/entrypoint validation, selected agent module syntax checks, MCP install/tests/syntax/pack verification, and `npm run build`.
+- This branch makes `npm run typecheck` an explicit CI contract rather than leaving a defined TypeScript check outside automation.
 
 ## Claim states
-- Public/static analyzer architecture: SUPPORTED by repository implementation; current exact-head CI status NOT YET PROVEN in this Foundry run.
-- Local agent architecture: SUPPORTED by repository implementation; browser-runtime behavior across arbitrary installed extensions NOT YET PROVEN.
-- MCP retry-safe command cache: implementation present; exact-head CI validation NOT YET PROVEN in this Foundry run.
+- Public/static analyzer software contract: SUPPORTED at the validated implementation head by exact-head CI.
+- Local agent software/manifest contract: SUPPORTED at the validated implementation head; browser-runtime behavior across arbitrary installed extensions remains NOT YET PROVEN.
+- MCP package/build contract: SUPPORTED at the validated implementation head by exact-head CI; production reliability under arbitrary clients remains NOT YET PROVEN.
 - Extension maliciousness from permissions/static references: REJECTED as an allowed inference.
 - Per-extension usage telemetry from Chrome: NOT YET PROVEN / unavailable under the current product model; do not fabricate it.
 
@@ -30,7 +31,7 @@ Local-first control plane for installed browser extensions: inventory, capabilit
 - Never convert permission presence into a claim of observed collection or malicious behavior.
 
 ## Current blocker
-Exact-head pull-request CI must execute the complete contract, including the newly explicit TypeScript check.
+No CI blocker remains for this branch. The next product increment must preserve the privacy boundary while joining installed-agent inventory with analyzer output.
 
 ## Highest-EV next move
-Consume CI unchanged. If green, connect the installed-agent inventory to analyzer output using a deterministic, privacy-preserving enrichment contract and tests that prove no raw browsing-history payload crosses that boundary. If CI fails, preserve the failure and repair only the demonstrated contract break.
+Connect installed-agent inventory to analyzer output using a deterministic, privacy-preserving enrichment contract. Add fixtures proving raw browsing-history payloads cannot cross the boundary, and preserve the distinction between declared capability, static references, locally observed workflow relevance, and observed malicious behavior.
