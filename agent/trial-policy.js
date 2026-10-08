@@ -47,7 +47,11 @@ export function applyTrialAnnotation(trial, reason, at = Date.now()) {
 export function reconcileTrialObservation(trial, observation, now = Date.now()) {
   if (!trial?.active) return null;
 
-  if (!observation?.exists) {
+  // Unknown observations are not evidence of uninstall or a completed disable trial.
+  if (typeof observation?.exists !== "boolean") return null;
+  if (observation.exists && typeof observation.enabled !== "boolean") return null;
+
+  if (!observation.exists) {
     return {
       outcome: "uninstalled",
       status: "ended",
