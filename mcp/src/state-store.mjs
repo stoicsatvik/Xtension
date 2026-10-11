@@ -180,6 +180,16 @@ export function createBridgeStore({
 
     let command = commands.find((item) => item.fingerprint === fingerprint);
     if (!command) {
+      // A new action invalidates previous acknowledgements for this extension,
+      // including while the intervening action is still awaiting Chrome.
+      const extensionId = payload?.extensionId;
+      if (typeof extensionId === "string" && extensionId) {
+        for (const [priorFingerprint, prior] of completedByFingerprint) {
+          if (prior.extensionId === extensionId && priorFingerprint !== fingerprint) {
+            completedByFingerprint.delete(priorFingerprint);
+          }
+        }
+      }
       command = {
         id: crypto.randomUUID(),
         type,
@@ -200,7 +210,12 @@ export function createBridgeStore({
 
     const [command] = commands.splice(index, 1);
     const completedAt = now();
-    completedByFingerprint.set(command.fingerprint, { result, completedAt });
+    // Browser failures are not successful idempotent actions and must be retryable.
+    if (result?.ok === true) {
+      completedByFingerprint.set(command.fingerprint, {
+        result, completedAt, extensionId: command.payload?.extensionId
+      });
+    }
     completedIds.set(id, completedAt);
 
     const waiter = waiters.get(id);
