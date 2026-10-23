@@ -1,4 +1,5 @@
 const MCP_CONFIG_KEY = "xtension.mcp.v1";
+const MCP_APPROVALS_KEY = "xtension.mcp.approvals.v1";
 const MCP_ORIGIN = "http://127.0.0.1/*";
 
 function escapeHtml(value) {
@@ -67,6 +68,21 @@ async function render() {
     return;
   }
 
+  const approvals = await worker({ type: "mcp:approvals" });
+  const actionNames = {
+    "start-trial": "Start disable trial",
+    "restore-extension": "Re-enable extension",
+    "uninstall-extension": "Uninstall extension"
+  };
+  const approvalCards = approvals.map((item) => `
+    <div class="mcp-approval" data-request="${escapeHtml(item.id)}">
+      <p><strong>${escapeHtml(actionNames[item.type] ?? item.type)}</strong>
+      for extension <code>${escapeHtml(item.extensionId)}</code>
+      ${item.days ? `(${escapeHtml(item.days)} days)` : ""}
+      <br><small>Expires: ${escapeHtml(formatTime(item.expiresAt))}</small></p>
+      <button data-mcp-decision="approve" data-command-id="${escapeHtml(item.id)}">Approve once</button>
+      <button class="secondary" data-mcp-decision="deny" data-command-id="${escapeHtml(item.id)}">Deny</button>
+    </div>`).join("");
   container.classList.remove("error");
   container.innerHTML = `
     <div>
@@ -77,11 +93,32 @@ async function render() {
     <div class="mcp-actions">
       <button id="mcpSyncButton" class="secondary">Sync now</button>
       <button id="mcpDisconnectButton" class="secondary">Disconnect</button>
+    </div>
+    <div class="mcp-approvals" aria-live="polite">
+      <h3>Local approval required ${approvals.length ? `(${approvals.length})` : ""}</h3>
+      <p>MCP clients can request Chrome state changes, but cannot approve them. Approval is single-use and expires after five minutes.</p>
+      ${approvalCards || '<p class="muted">No pending Chrome-state changes.</p>'}
     </div>`;
 
   document.querySelector("#mcpSyncButton").addEventListener("click", async () => {
     await worker({ type: "mcp:sync" });
     await render();
+  });
+  container.querySelectorAll("[data-mcp-decision]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const commandId = button.dataset.commandId;
+      const type = button.dataset.mcpDecision === "approve" ? "mcp:approve" : "mcp:deny";
+      button.disabled = true;
+      try {
+        await worker({ type, commandId });
+        await render();
+      } catch (error) {
+        container.classList.add("error");
+        const notice = container.querySelector(".mcp-approvals p");
+        if (notice) notice.textContent = error?.message || "Approval request failed.";
+        button.disabled = false;
+      }
+    });
   });
   document.querySelector("#mcpDisconnectButton").addEventListener("click", async () => {
     await worker({ type: "mcp:disconnect" });
@@ -91,7 +128,7 @@ async function render() {
 }
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName === "local" && changes[MCP_CONFIG_KEY]) void render();
+  if (areaName === "local" && (changes[MCP_CONFIG_KEY] || changes[MCP_APPROVALS_KEY])) void render();
 });
 
 await render();
