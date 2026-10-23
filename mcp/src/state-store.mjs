@@ -63,6 +63,23 @@ function stableValue(value) {
   return value;
 }
 
+// A cached action result is valid only for the observed extension state.
+// Exclude inventory timestamps and unrelated evidence updates: they do not
+// change whether a browser-state mutation should be retried.
+function commandStateFingerprint(snapshot) {
+  const extensions = Array.isArray(snapshot?.inventory?.extensions)
+    ? snapshot.inventory.extensions
+      .map((item) => ({ id: item.id, enabled: item.enabled }))
+      .sort((a, b) => String(a.id).localeCompare(String(b.id)))
+    : null;
+  return JSON.stringify(stableValue({
+    extensions,
+    trials: snapshot?.trials ?? null,
+    preferences: snapshot?.preferences ?? null,
+    removedExtensions: snapshot?.removedExtensions ?? null
+  }));
+}
+
 function commandFingerprint(type, payload) {
   return JSON.stringify([type, stableValue(payload)]);
 }
@@ -115,7 +132,8 @@ export function createBridgeStore({
   initialState,
   now = () => Date.now(),
   commandLeaseMs = DEFAULT_COMMAND_LEASE_MS,
-  dedupeWindowMs = DEFAULT_DEDUPE_WINDOW_MS
+  dedupeWindowMs = DEFAULT_DEDUPE_WINDOW_MS,
+  persistSnapshot = persistState
 }) {
   const state = {
     lastSyncAt: initialState?.lastSyncAt ?? 0,
@@ -125,6 +143,7 @@ export function createBridgeStore({
   const waiters = new Map();
   const completedByFingerprint = new Map();
   const completedIds = new Map();
+  let lastCommandState = commandStateFingerprint(state.snapshot);
 
   function pruneCompleted() {
     const cutoff = now() - dedupeWindowMs;
@@ -200,7 +219,8 @@ export function createBridgeStore({
 
     const [command] = commands.splice(index, 1);
     const completedAt = now();
-    completedByFingerprint.set(command.fingerprint, { result, completedAt });
+    // A transient failure must not suppress a legitimate retry for a minute.
+    if (result?.ok !== false) completedByFingerprint.set(command.fingerprint, { result, completedAt });
     completedIds.set(id, completedAt);
 
     const waiter = waiters.get(id);
@@ -241,9 +261,17 @@ export function createBridgeStore({
     completeCommand,
     waitForCommands,
     async updateSnapshot(snapshot) {
-      state.snapshot = sanitizeSnapshot(snapshot);
+      const sanitized = sanitizeSnapshot(snapshot);
+      const nextCommandState = commandStateFingerprint(sanitized);
+      if (nextCommandState !== lastCommandState) {
+        // A previous success cannot stand in for a new request after Chrome
+        // extension state, a trial, or a local preference changes.
+        completedByFingerprint.clear();
+        lastCommandState = nextCommandState;
+      }
+      state.snapshot = sanitized;
       state.lastSyncAt = now();
-      await persistState(state);
+      await persistSnapshot(state);
       return compactStatus();
     },
     takeCommands(limit = 20) {
