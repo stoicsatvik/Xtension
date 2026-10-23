@@ -143,7 +143,7 @@ async function checkLocalApproval(command) {
   return state;
 }
 
-async function executeCommandOnce(command) {
+export async function executeCommandOnce(command) {
   if (commandsInFlight.has(command.id)) return null;
   commandsInFlight.add(command.id);
   try {
