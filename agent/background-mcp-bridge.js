@@ -1,5 +1,9 @@
 import { LOCAL_EVIDENCE_KEYS } from "./export-policy.js";
 import {
+  MCP_APPROVALS_KEY, approvalState, consumeMcpApproval, decideMcpApproval,
+  pendingMcpApproval, requiresMcpApproval
+} from "./mcp-approval-policy.js";
+import {
   findCommandResult,
   MCP_COMMAND_RESULTS_KEY,
   rememberCommandResult
@@ -9,6 +13,7 @@ const MCP_CONFIG_KEY = "xtension.mcp.v1";
 const BRIDGE_ORIGIN = "http://127.0.0.1:43128";
 let loopGeneration = 0;
 let syncTimer = null;
+const commandsInFlight = new Set();
 
 async function getConfig() {
   const stored = await chrome.storage.local.get(MCP_CONFIG_KEY);
@@ -104,12 +109,65 @@ async function persistCommandResult(commandId, result) {
   await chrome.storage.local.set({ [MCP_COMMAND_RESULTS_KEY]: next });
 }
 
-async function executeCommandOnce(command) {
+async function readApprovals() {
+  const stored = await chrome.storage.local.get(MCP_APPROVALS_KEY);
+  const records = stored[MCP_APPROVALS_KEY];
+  return records && typeof records === "object" && !Array.isArray(records) ? records : {};
+}
+
+async function saveApprovals(records) {
+  await chrome.storage.local.set({ [MCP_APPROVALS_KEY]: records });
+}
+
+async function checkLocalApproval(command) {
+  const records = await readApprovals();
+  const state = approvalState(records, command);
+  if (state === "missing") {
+    // Keep the command leased in the local MCP queue until the user explicitly
+    // approves or denies it from the extension's own dashboard.
+    const pending = pendingMcpApproval(command);
+    const bounded = Object.fromEntries(
+      Object.entries({ ...records, [command.id]: pending })
+        .sort((a, b) => (b[1]?.createdAt ?? 0) - (a[1]?.createdAt ?? 0))
+        .slice(0, 100)
+    );
+    await saveApprovals(bounded);
+    return "pending";
+  }
+  if (state === "approved") {
+    // Consume *before* changing Chrome state. A crash can lose the operation,
+    // but cannot silently repeat a destructive operation after restart.
+    await saveApprovals(consumeMcpApproval(records, command.id));
+    return "approved";
+  }
+  return state;
+}
+
+export async function executeCommandOnce(command) {
+  if (commandsInFlight.has(command.id)) return null;
+  commandsInFlight.add(command.id);
+  try {
+    return await executeCommandOnceLocked(command);
+  } finally {
+    commandsInFlight.delete(command.id);
+  }
+}
+
+async function executeCommandOnceLocked(command) {
   const cached = await readCachedCommandResult(command.id);
   if (cached) return cached;
 
   let result;
   try {
+    if (requiresMcpApproval(command.type)) {
+      const state = await checkLocalApproval(command);
+      if (state === "pending") return null;
+      if (state !== "approved") {
+        throw new Error(state === "denied"
+          ? "Xtension action denied by the local user."
+          : "Xtension action requires a fresh local approval (expired, changed, or consumed).");
+      }
+    }
     const value = await executeCommand(command);
     result = { ok: true, value };
   } catch (error) {
@@ -141,7 +199,7 @@ async function pollLoop(generation) {
       const payload = await bridgeFetch("/v1/commands?wait=20000", config);
       for (const command of payload.commands ?? []) {
         const result = await executeCommandOnce(command);
-        await postCommandResult(config, command, result);
+        if (result !== null) await postCommandResult(config, command, result);
       }
       if (payload.commands?.length) await syncNow(config);
     } catch (error) {
@@ -178,7 +236,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   if (Object.values(LOCAL_EVIDENCE_KEYS).some((key) => changes[key])) scheduleSync();
 });
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message !== "object" || !String(message.type ?? "").startsWith("mcp:")) return false;
   const respond = (promise) => {
     promise.then(sendResponse).catch((error) => sendResponse({ error: error?.message || String(error) }));
@@ -197,11 +255,30 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "mcp:disconnect") {
     return respond((async () => {
       loopGeneration += 1;
-      await chrome.storage.local.remove(MCP_CONFIG_KEY);
+      await chrome.storage.local.remove([MCP_CONFIG_KEY, MCP_APPROVALS_KEY]);
       return { connected: false };
     })());
   }
   if (message.type === "mcp:sync") return respond(syncNow());
+  if (message.type === "mcp:approvals") {
+    return respond((async () => Object.values(await readApprovals())
+      .filter((item) => item.status === "pending" && item.expiresAt > Date.now())
+      .map(({ id, type, extensionId, days, expiresAt }) =>
+        ({ id, type, extensionId, days, expiresAt })))());
+  }
+  if (message.type === "mcp:approve" || message.type === "mcp:deny") {
+    return respond((async () => {
+      // A remote MCP client can enqueue a request but cannot approve it.
+      if (sender.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL("dashboard.html")) {
+        throw new Error("Only the local Xtension dashboard can approve MCP actions.");
+      }
+      const id = String(message.commandId ?? "");
+      const records = await readApprovals();
+      const decision = message.type === "mcp:approve" ? "approved" : "denied";
+      await saveApprovals(decideMcpApproval(records, id, decision));
+      return { ok: true, id, decision };
+    })());
+  }
   if (message.type === "mcp:status") {
     return respond((async () => {
       const config = await getConfig();
