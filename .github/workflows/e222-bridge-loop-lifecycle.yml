@@ -15,8 +15,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci --ignore-scripts
+      - run: npm install --ignore-scripts --no-package-lock
       - name: E222 loop restart falsification
         run: npx vitest run tests/mcp-bridge-loop-lifecycle.test.js
       - name: Agent syntax validation
