@@ -109,14 +109,29 @@ export async function ensureBridgeToken() {
 }
 
 export async function readPersistedState() {
+  let contents;
   try {
-    const parsed = JSON.parse(await fs.readFile(STATE_PATH, "utf8"));
+    contents = await fs.readFile(STATE_PATH, "utf8");
+  } catch (error) {
+    // A missing file is a legitimate first run. Permission or I/O failures
+    // must not be mistaken for a fresh installation.
+    if (error?.code === "ENOENT") return { lastSyncAt: 0, snapshot: {} };
+    throw new Error("Cannot read Xtension persisted state; refusing to reset it.", { cause: error });
+  }
+
+  try {
+    const parsed = JSON.parse(contents);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Persisted state root must be a JSON object.");
+    }
     return {
       lastSyncAt: Number(parsed.lastSyncAt) || 0,
       snapshot: sanitizeSnapshot(parsed.snapshot ?? {})
     };
-  } catch {
-    return { lastSyncAt: 0, snapshot: {} };
+  } catch (error) {
+    // Fail closed: silently replacing a corrupt state with an empty one
+    // would let the next /v1/sync overwrite the only surviving evidence.
+    throw new Error("Invalid Xtension persisted state; refusing to overwrite corrupt data.", { cause: error });
   }
 }
 
