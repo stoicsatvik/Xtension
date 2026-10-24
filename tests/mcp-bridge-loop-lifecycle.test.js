@@ -65,6 +65,17 @@ it("a successful sync does not recursively restart the polling loop, but token r
   await pause(100);
   expect(syncRequests).toBe(1);
 
+  // Error reporting updates the same config record and must not create
+  // another generation or resend the same snapshot.
+  const metadataBefore = stored[KEY];
+  const metadataAfter = { ...metadataBefore, lastError: "simulated failure" };
+  stored[KEY] = metadataAfter;
+  for (const listener of listeners) {
+    listener({ [KEY]: { oldValue: metadataBefore, newValue: metadataAfter } }, "local");
+  }
+  await pause(30);
+  expect(syncRequests).toBe(1);
+
   const oldValue = stored[KEY];
   const newValue = { ...oldValue, token: "b".repeat(64) };
   stored[KEY] = newValue;
