@@ -200,17 +200,32 @@ async function postCommandResult(config, command, result) {
   });
 }
 
+// Long polls may complete after pairing rotation or disconnect. A response
+// authenticated with a revoked token must never dispatch browser commands.
+// Both the generation and stored credentials are checked after every async
+// boundary before dispatch/ack; this is not an atomic Chrome-storage CAS.
+async function isCurrentPollGeneration(generation, config) {
+  if (generation !== loopGeneration) return false;
+  const current = await getConfig();
+  return generation === loopGeneration && current?.token === config.token;
+}
+
 async function pollLoop(generation) {
   while (generation === loopGeneration) {
     const config = await getConfig();
     if (!config) return;
     try {
       const payload = await bridgeFetch("/v1/commands?wait=20000", config);
+      if (!(await isCurrentPollGeneration(generation, config))) return;
       for (const command of payload.commands ?? []) {
+        if (!(await isCurrentPollGeneration(generation, config))) return;
         const result = await executeCommandOnce(command);
+        if (!(await isCurrentPollGeneration(generation, config))) return;
         if (result !== null) await postCommandResult(config, command, result);
       }
-      if (payload.commands?.length) await syncNow(config);
+      if (payload.commands?.length && await isCurrentPollGeneration(generation, config)) {
+        await syncNow(config);
+      }
     } catch (error) {
       await updateConnectionMetadata(config, {
         lastError: error instanceof Error ? error.message : String(error),
