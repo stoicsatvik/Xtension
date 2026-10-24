@@ -240,3 +240,21 @@ A revocation after the final check can still race the asynchronous mutation;
 approval records may also be written after disconnect. Next: instrument a
 barrier *inside* storage.set and test delayed approval-record writes.
 No merge, deployment, real browser data, or external outreach.
+
+
+## E226 approval resurrection and atomic commit falsification — 2026-10-25
+
+Draft PR #19 is stacked on E225 PR #18 and remains unmerged. Two delayed
+approval-read regressions exposed stale writes after token rotation and
+disconnect: **2/2 failed as predicted** in test-only [red CI #40132593525](https://github.com/stoicsatvik/Xtension/actions/runs/40132593525).
+The narrow correction revalidates pairing after the async approval read;
+targeted [E226 CI #40132666395](https://github.com/stoicsatvik/Xtension/actions/runs/40132666395)
+passed all 4 test cases, but **one is an explicitly expected-failing
+atomicity property**. A `chrome.storage.local.set(preferences)` already in
+flight still commits after revocation; this remains unresolved and is not
+counted as a fixed security invariant.
+
+Details: `research/E226_revocation_commit_races.md`. Next: prototype
+serialized bridge-action/disconnect ordering and separately test cross-context
+token changes, approval-store commit barriers, and real Chrome lifecycle.
+No merge, deployment, live browser state, or outreach.
