@@ -1,0 +1,26 @@
+name: E218 crash-phase filesystem falsification
+on:
+  push:
+    branches:
+      - research/e218-crash-phase-falsification-20261024
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  crash-phases:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: E218 independent-process hard-crash tests
+        run: node --test mcp/node-tests/experiments/crash-phase-falsification.mjs
+      - name: E217 cross-process consistency regression
+        run: node --test mcp/node-tests/experiments/stale-process-overwrite.mjs
+      - name: E213-E215 persistence regressions
+        run: node --test mcp/node-tests/snapshot-persistence-order.mjs mcp/node-tests/snapshot-revision-aliasing.mjs mcp/node-tests/persisted-state-corruption.mjs
+      - name: Syntax validation
+        run: |
+          node --check mcp/src/state-store.mjs
+          node --check mcp/node-tests/experiments/crash-phase-falsification.mjs
