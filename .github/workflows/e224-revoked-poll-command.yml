@@ -1,0 +1,22 @@
+name: E224 revoked poll command fence
+on:
+  push:
+    branches:
+      - research/e224-revoked-poll-command-fence-20261025
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  stale-poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts --no-package-lock
+      - name: Revoked long-poll command isolation
+        run: npx vitest run tests/mcp-bridge-revoked-poll-command.test.js
+      - name: Agent syntax
+        run: node --check agent/background-mcp-bridge.js

@@ -201,3 +201,20 @@ sync or polling-error metadata, discarding obsolete-token updates. See
 atomic cross-context compare-and-set, stale command response suppression,
 real Chrome worker suspend/resume, or HTTP 409 reconciliation. No merge,
 deployment, user-data access, or outreach.
+
+
+## E224 revoked long-poll command execution — 2026-10-25
+
+Draft PR #17 is stacked on E223 PR #16. The E223 pairing metadata guard
+did not prevent an already-outstanding `/v1/commands` response from
+dispatching browser mutations after token rotation or disconnect.
+[Preserved red PR CI #40123639239](https://github.com/stoicsatvik/Xtension/actions/runs/40123639239)
+failed 2/3 tests: each revoked response mutated local preferences once;
+the still-current-pairing control passed.
+
+E224 adds a generation-and-token check immediately after long-poll return,
+before each command dispatch, before acknowledgements, and before follow-up
+sync. See `research/E224_revoked_poll_command_fence.md` and the scoped CI.
+**Not proven:** atomic revocation across asynchronous command execution,
+real Chrome worker lifecycle, cross-context storage CAS, or HTTP 409 recovery.
+No merge, deployment, real browser state, user data, or external outreach.
