@@ -119,3 +119,23 @@ limitations. The final exact-head CI must be verified separately.
 **Unproven:** power-loss durability, hostile on-disk rollback, stale-lock
 auto-recovery, real Chrome worker integration. No deployment, merge, or
 outreach performed.
+
+## E220 rejected-sync rollback — 2026-10-24
+
+Draft E220 is stacked on E219 PR #12. Rejected persistence previously left
+`store.state.snapshot` and `lastSyncAt` showing an uncommitted revision even
+after the update promise rejected (HTTP 409 for real CAS conflicts).
+[Red CI 40105430042](https://github.com/stoicsatvik/Xtension/actions/runs/40105430042)
+reproduced both a first-write and queued-second-write counterexample (1/3
+initial tests passed). The correction conditionally restores the most recent
+committed revision after a rejected write, without clobbering a newer queued
+update. An additional older-failure/newer-success concurrency regression was
+added. [Initial green CI 40105480044](https://github.com/stoicsatvik/Xtension/actions/runs/40105480044)
+passed the first three cases and inherited E213–E219 regressions; final
+exact-head CI must be checked after documentation.
+
+**Remaining limitation:** in-flight snapshots may still be visible before
+persistence completes. This is not a fully transactional committed-read
+interface or a solution for client-side 409 reconciliation. Full experiment:
+`research/E220_rejected_sync_rollback.md`. No merge, deployment, live user
+state, or outreach.
