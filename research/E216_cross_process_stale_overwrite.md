@@ -18,7 +18,19 @@ E213 serialized **in-process** snapshot writes; E214 cloned accepted revisions; 
 
 The deterministic schedule is intentional: no reliance on a flaky simultaneous race. The second test is a **known-failing falsification probe**, not part of the default `npm test` glob. The E216 workflow explicitly requires the *specific* failure signature while running the prior E213-E215 regressions normally. CI success therefore means the counterexample was reproduced, **not** that the production invariant is satisfied.
 
-## Expected interpretation and safety
+## Observed result (exact-head CI)
+
+At commit `12a37a15e63402d69c11bd0db0f093b25ff8c77b`, [GitHub Actions run 40088829460](https://github.com/stoicsatvik/Xtension/actions/runs/40088829460) reproduced the predicted failure on a real disposable filesystem:
+
+- **Control:** 1/1 passed. One writer persisted and reloaded timestamp 2000.
+- **Stale-process invariant:** 0/1 passed. Canonical file ended with `{"lastSyncAt":1000,"snapshot":{"preferences":{"stale":{"verdict":"essential"}}}}`. The newer entry was gone.
+- **Existing E213-E215 regression suite:** 8/8 passed.
+- **Syntax checks:** passed.
+- The E216 workflow succeeded only because it **explicitly expects and verifies this exact red counterexample**. This is not a green fix.
+
+This is a deterministic counterexample to cross-process monotonicity, not a statistical failure rate or evidence of exploitation.
+
+## Interpretation and safety
 
 A stale process overwriting the newer state is evidence of an uncoordinated multi-process last-writer-wins defect. It is not proof of data loss on any real user's machine. This test does not touch the live home directory, Chrome extensions, network services, or a production bridge.
 
