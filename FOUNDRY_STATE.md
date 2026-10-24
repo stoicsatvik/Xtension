@@ -163,3 +163,26 @@ Verify final CI after documentation commits.
 409 reconciliation, fsync durability, automatic stale-lock recovery. Full
 protocol: `research/E221_committed_read_isolation.md`.
 No merge, deployment, user data changes, or outreach.
+
+
+## E222 MCP bridge polling-loop lifecycle — 2026-10-24
+
+Draft E222 PR #15 is stacked on E221 PR #14. A successful bridge sync
+updated `xtension.mcp.v1.lastSyncAt`, which triggered the storage listener's
+unconditional `startLoop()`. That restart called `syncNow()` again,
+potentially multiplying polling generations and network traffic.
+
+A bounded Chrome-storage mock importing the actual agent reproduced **six**
+sync requests where one was expected at test-only commit `225079a`.
+[Red CI #40114641435](https://github.com/stoicsatvik/Xtension/actions/runs/40114641435)
+preserves the negative result. An earlier failed CI run was a workflow
+configuration error (root lockfile absent), not application evidence.
+
+The fix restarts the loop only for pairing-token or enabled-state changes,
+not sync timestamps or error metadata. The regression also checks that token
+rotation still causes a new sync. See `research/E222_bridge_loop_lifecycle.md`.
+Verify final exact-head CI after documentation.
+
+**Unproven:** real Chrome worker lifecycle, HTTP 409 reconciliation,
+cross-process reads, power-loss durability, abandoned-lock recovery.
+No merge, deployment, user-data access, or outreach.
