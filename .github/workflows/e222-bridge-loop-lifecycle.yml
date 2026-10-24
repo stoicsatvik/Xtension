@@ -1,0 +1,22 @@
+name: E222 bridge loop lifecycle
+on:
+  push:
+    branches:
+      - research/e222-bridge-loop-generation-20261024
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  loop-lifecycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts --no-package-lock
+      - name: E222 loop restart falsification
+        run: npx vitest run tests/mcp-bridge-loop-lifecycle.test.js
+      - name: Agent syntax validation
+        run: node --check agent/background-mcp-bridge.js
