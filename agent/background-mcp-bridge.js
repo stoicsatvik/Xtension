@@ -230,7 +230,13 @@ function scheduleSync() {
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== "local") return;
   if (changes[MCP_CONFIG_KEY]) {
-    startLoop();
+    const previous = changes[MCP_CONFIG_KEY].oldValue;
+    const next = changes[MCP_CONFIG_KEY].newValue;
+    // A successful sync and an error report update metadata in this object.
+    // Only pairing/enablement changes should replace the polling generation.
+    const enabledChanged = Boolean(previous?.enabled) !== Boolean(next?.enabled);
+    const tokenChanged = Boolean(next?.enabled) && previous?.token !== next?.token;
+    if (enabledChanged || tokenChanged) startLoop();
     return;
   }
   if (Object.values(LOCAL_EVIDENCE_KEYS).some((key) => changes[key])) scheduleSync();
