@@ -280,3 +280,25 @@ and preserved negative result. Verify final exact-head CI after documentation.
 hung browser writes, worker restart safety, or real Chrome behavior. The E226
 expected-failing external revocation/commit assertion remains unresolved.
 No merge, deployment, real browser changes or outreach.
+
+
+## E228 stale pairing snapshot export — 2026-10-25
+
+Draft PR #21 is stacked on E227 PR #20, unmerged. A delayed Chrome
+evidence snapshot could still be posted to the local MCP bridge with a
+revoked token after local rotation or disconnect. Test-only
+[red CI #40141449903](https://github.com/stoicsatvik/Xtension/actions/runs/40141449903)
+reproduced **2 failures / 1 passing control**.
+
+The narrow correction re-reads the active pairing **after** asynchronous
+snapshot collection and **before** starting a new HTTP sync. Obsolete syncs
+return `connected: false, reason: "pairing-changed"` without dispatching.
+[Green implementation CI #40141465792](https://github.com/stoicsatvik/Xtension/actions/runs/40141465792)
+passed **3/3 E228 tests**, **9/9 inherited E223/E226/E227 tests**, and
+syntax; **14/14 implementation-head workflows succeeded**.
+See `research/E228_stale_pairing_snapshot_sync.md`.
+
+**Unresolved:** last-check-to-fetch race, already-sent HTTP requests,
+cross-context atomic revocation, MV3 restart behavior, and the known
+E226 expected-failing in-flight storage commit assertion. No merge,
+deployment, live browser data, or external outreach.
