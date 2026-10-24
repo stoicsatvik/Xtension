@@ -86,3 +86,40 @@ test("E219 stale A writer must be rejected after another writer commits A -> B -
     await fs.rm(home, { recursive: true, force: true });
   }
 });
+
+
+test("E219 legacy canonical file upgrades to a durable generation on first write", async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "xtension-e219-legacy-"));
+  const file = path.join(home, ".xtension", "state.json");
+  try {
+    await fs.mkdir(path.dirname(file));
+    await fs.writeFile(file, JSON.stringify({ lastSyncAt: 1000, snapshot: { preferences: { legacy: { verdict: "essential" } } } }));
+    const first = writer(home, "A");
+    assert.equal(first.status, 0, first.stderr);
+    const a = JSON.parse(await fs.readFile(file, "utf8"));
+    assert.match(a.revisionId, /^[0-9a-f-]{36}$/i);
+    const second = writer(home, "A");
+    assert.equal(second.status, 0, second.stderr);
+    const b = JSON.parse(await fs.readFile(file, "utf8"));
+    assert.deepEqual(a.snapshot, b.snapshot);
+    assert.notEqual(a.revisionId, b.revisionId, "same-content writes require distinct generations");
+  } finally {
+    await fs.rm(home, { recursive: true, force: true });
+  }
+});
+
+test("E219 malformed persisted revisionId fails closed and preserves canonical bytes", async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "xtension-e219-invalid-"));
+  const file = path.join(home, ".xtension", "state.json");
+  try {
+    await fs.mkdir(path.dirname(file));
+    const malformed = JSON.stringify({ lastSyncAt: 1000, snapshot: {}, revisionId: { attacker: "invalid" } });
+    await fs.writeFile(file, malformed);
+    const result = writer(home, "A");
+    assert.notEqual(result.status, 0, "invalid revisionId must not be silently accepted");
+    assert.match(result.stderr, /invalid.*persisted state|persisted revisionId/i);
+    assert.equal(await fs.readFile(file, "utf8"), malformed);
+  } finally {
+    await fs.rm(home, { recursive: true, force: true });
+  }
+});
