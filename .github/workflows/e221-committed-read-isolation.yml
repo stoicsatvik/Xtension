@@ -1,0 +1,27 @@
+name: E221 committed read isolation
+on:
+  push:
+    branches:
+      - research/e221-committed-read-isolation-20261024
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  committed-read:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: E221 committed read falsification
+        run: node --test mcp/node-tests/experiments/committed-read-isolation.mjs
+      - name: E220 rollback regressions
+        run: node --test mcp/node-tests/experiments/rejected-sync-rollback.mjs
+      - name: E213-E215 persistence regressions
+        run: node --test mcp/node-tests/snapshot-persistence-order.mjs mcp/node-tests/snapshot-revision-aliasing.mjs mcp/node-tests/persisted-state-corruption.mjs
+      - name: E217-E219 cross-process and crash regressions
+        run: node --test mcp/node-tests/experiments/stale-process-overwrite.mjs mcp/node-tests/experiments/crash-phase-falsification.mjs mcp/node-tests/experiments/aba-revision-generation.mjs
+      - name: Syntax validation
+        run: node --check mcp/src/state-store.mjs

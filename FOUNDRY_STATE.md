@@ -139,3 +139,27 @@ persistence completes. This is not a fully transactional committed-read
 interface or a solution for client-side 409 reconciliation. Full experiment:
 `research/E220_rejected_sync_rollback.md`. No merge, deployment, live user
 state, or outreach.
+
+
+## E221 committed-read isolation — 2026-10-24
+
+Draft E221 PR #14 is stacked on E220 PR #13. E220 still published
+uncommitted snapshots to MCP readers while writes were pending. The E221
+deferred-persistence falsification reproduced three premature-visibility
+failures; a fourth command-cache test timed out because tentative acceptance
+invalidated cached commands. Preserve [red CI 40110165726](https://github.com/stoicsatvik/Xtension/actions/runs/40110165726).
+
+The correction commits visible snapshots, timestamps, and command-cache
+invalidation only after a successful queued persistence operation. An older
+E214 test that assumed tentative visibility was updated to mutate the
+committed state instead, retaining its isolation assertion. The intermediate
+inherited-test failure is preserved in
+[CI 40110230845](https://github.com/stoicsatvik/Xtension/actions/runs/40110230845).
+Four E221 tests and all seven E214–E220 workflows passed at intermediate
+exact-head commit `e22ad4f187db85ac9574e91ce13870a7ba0a93d9`.
+Verify final CI after documentation commits.
+
+**Not established:** cross-process linearizable reads, live Chrome integration,
+409 reconciliation, fsync durability, automatic stale-lock recovery. Full
+protocol: `research/E221_committed_read_isolation.md`.
+No merge, deployment, user data changes, or outreach.
