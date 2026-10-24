@@ -37,3 +37,22 @@ Run an actual unpacked-extension browser test with a disposable extension and a 
 ## Safety
 
 No live browser changes, publication, deployment, main merge, paid API, or outreach performed. This remains a draft PR.
+
+## E214 snapshot aliasing — 2026-10-24
+
+Draft PR #7 is stacked on E213 PR #6 and is **not merged**. E213's ordered
+persistence queue did not detach nested input objects or the exposed live
+snapshot from queued disk revisions. Two deterministic adversarial tests
+confirmed that post-acceptance mutations changed the value later persisted:
+**0/2 passed** at red CI run 40080913725. The fix clones the sanitized
+accepted state and independently clones each queued revision; E214 **2/2**
+and E213 **2/2** passed with syntax validation at green CI run 40080950811.
+
+The result supports only an in-process, mocked-persistence snapshot-isolation
+contract. It does not establish cross-process write coordination, durable
+fsync, crash recovery, or real Chrome behavior. Full protocol, failures and
+limitations: `research/E214_snapshot_revision_aliasing.md`.
+
+**Next:** test two local bridge processes and simulated crashes around
+temporary-file rename, without touching live browser extensions. No merge,
+deployment, paid action, or outreach.
