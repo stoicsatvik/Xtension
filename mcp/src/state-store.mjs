@@ -210,6 +210,9 @@ export function createBridgeStore({
     revisionId: initialState?.revisionId ?? null
   };
   let lastCommandState = commandStateFingerprint(state.snapshot);
+  // Track the newest queued revision. A rejected write may roll the visible
+  // state back only if no newer update has already been accepted.
+  let newestQueuedRevisionId = null;
 
   function pruneCompleted() {
     const cutoff = now() - dedupeWindowMs;
@@ -347,9 +350,24 @@ export function createBridgeStore({
         snapshot: structuredClone(acceptedSnapshot),
         revisionId: crypto.randomUUID()
       };
+      newestQueuedRevisionId = revision.revisionId;
       const write = persistQueue.then(async () => {
-        await persistSnapshot(revision, lastPersistedRevision);
-        lastPersistedRevision = structuredClone(revision);
+        try {
+          await persistSnapshot(revision, lastPersistedRevision);
+          lastPersistedRevision = structuredClone(revision);
+        } catch (error) {
+          // The caller receives a rejected sync (HTTP 409 on a CAS conflict).
+          // Do not continue exposing the rejected snapshot as if it were
+          // committed. A later queued revision owns the live state until its
+          // own persistence succeeds or fails.
+          if (newestQueuedRevisionId === revision.revisionId) {
+            state.snapshot = structuredClone(lastPersistedRevision.snapshot);
+            state.lastSyncAt = lastPersistedRevision.lastSyncAt;
+            lastCommandState = commandStateFingerprint(state.snapshot);
+            completedByFingerprint.clear();
+          }
+          throw error;
+        }
       });
       // A failed disk write must not poison the queue for future snapshots.
       persistQueue = write.catch(() => {});
