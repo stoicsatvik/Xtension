@@ -264,18 +264,24 @@ export function createBridgeStore({
     waitForCommands,
     async updateSnapshot(snapshot) {
       const sanitized = sanitizeSnapshot(snapshot);
-      const nextCommandState = commandStateFingerprint(sanitized);
+      // The HTTP boundary supplies JSON, but callers of this store can still
+      // mutate nested input objects after updateSnapshot returns a promise.
+      const acceptedSnapshot = structuredClone(sanitized);
+      const nextCommandState = commandStateFingerprint(acceptedSnapshot);
       if (nextCommandState !== lastCommandState) {
         // A previous success cannot stand in for a new request after Chrome
         // extension state, a trial, or a local preference changes.
         completedByFingerprint.clear();
         lastCommandState = nextCommandState;
       }
-      state.snapshot = sanitized;
+      state.snapshot = acceptedSnapshot;
       state.lastSyncAt = now();
-      // Capture an immutable revision. Passing the live mutable state into an
-      // asynchronous writer can persist a later snapshot under an older sync.
-      const revision = { lastSyncAt: state.lastSyncAt, snapshot: sanitized };
+      // A queued disk revision must also be detached from the exposed live
+      // state. Otherwise another consumer can change a not-yet-written value.
+      const revision = {
+        lastSyncAt: state.lastSyncAt,
+        snapshot: structuredClone(acceptedSnapshot)
+      };
       const write = persistQueue.then(() => persistSnapshot(revision));
       // A failed disk write must not poison the queue for future snapshots.
       persistQueue = write.catch(() => {});
