@@ -76,6 +76,13 @@ async function syncNow(config = null) {
   const active = config ?? await getConfig();
   if (!active) return { connected: false, reason: "not-configured" };
   const snapshot = await buildSnapshot();
+  // Snapshot collection is asynchronous. A local dashboard or another Chrome
+  // context may revoke/rotate the token while evidence is being read. Never
+  // initiate a fresh export using an already-obsolete pairing.
+  const current = await getConfig();
+  if (!current || current.token !== active.token) {
+    return { connected: false, reason: "pairing-changed" };
+  }
   const result = await bridgeFetch("/v1/sync", active, {
     method: "POST",
     body: JSON.stringify({ snapshot })
