@@ -135,11 +135,41 @@ export async function readPersistedState() {
   }
 }
 
-async function persistState(state) {
+function stateConflict(message) {
+  const error = new Error(message);
+  error.code = "XTENSION_STATE_CONFLICT";
+  return error;
+}
+
+// Atomic directory creation gives participating bridge processes a shared
+// exclusion point. A stale lock is intentionally NOT broken automatically:
+// crash recovery requires verifying no writer is alive before manual removal.
+async function persistState(revision, expectedRevision) {
   await fs.mkdir(STATE_DIR, { recursive: true, mode: 0o700 });
+  const lockDir = `${STATE_PATH}.lock`;
+  try {
+    await fs.mkdir(lockDir, { mode: 0o700 });
+  } catch (error) {
+    if (error?.code === "EEXIST") {
+      throw stateConflict("Another Xtension bridge holds the state write lock; refusing a concurrent write.");
+    }
+    throw error;
+  }
+
   const tmp = `${STATE_PATH}.${process.pid}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(state, null, 2), { mode: 0o600 });
-  await fs.rename(tmp, STATE_PATH);
+  try {
+    // Both the check and rename must happen while holding the same lock.
+    // Comparing the full revision also catches equal-timestamp conflicts.
+    const current = await readPersistedState();
+    if (JSON.stringify(current) !== JSON.stringify(expectedRevision)) {
+      throw stateConflict("Xtension persisted state changed in another process; refusing stale overwrite. Restart the bridge to reload.");
+    }
+    await fs.writeFile(tmp, JSON.stringify(revision, null, 2), { mode: 0o600 });
+    await fs.rename(tmp, STATE_PATH);
+  } finally {
+    await fs.rm(tmp, { force: true }).catch(() => {});
+    await fs.rmdir(lockDir);
+  }
 }
 
 export function createBridgeStore({
@@ -160,6 +190,12 @@ export function createBridgeStore({
   const completedIds = new Map();
   // Keep on-disk revisions ordered even when two /v1/sync requests overlap.
   let persistQueue = Promise.resolve();
+  // Expected on-disk revision advances only after a successful write.
+  // Independent processes therefore cannot silently replace each other's data.
+  let lastPersistedRevision = {
+    lastSyncAt: state.lastSyncAt,
+    snapshot: structuredClone(state.snapshot)
+  };
   let lastCommandState = commandStateFingerprint(state.snapshot);
 
   function pruneCompleted() {
@@ -297,7 +333,10 @@ export function createBridgeStore({
         lastSyncAt: state.lastSyncAt,
         snapshot: structuredClone(acceptedSnapshot)
       };
-      const write = persistQueue.then(() => persistSnapshot(revision));
+      const write = persistQueue.then(async () => {
+        await persistSnapshot(revision, lastPersistedRevision);
+        lastPersistedRevision = structuredClone(revision);
+      });
       // A failed disk write must not poison the queue for future snapshots.
       persistQueue = write.catch(() => {});
       await write;
@@ -342,7 +381,9 @@ export function startLocalBridge(store, { port = Number(process.env.XTENSION_BRI
 
       return json(res, 404, { error: "Not found." });
     } catch (error) {
-      return json(res, 400, { error: error instanceof Error ? error.message : String(error) });
+      return json(res, error?.code === "XTENSION_STATE_CONFLICT" ? 409 : 400, {
+        error: error instanceof Error ? error.message : String(error)
+      });
     }
   });
 
