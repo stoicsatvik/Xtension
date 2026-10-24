@@ -38,3 +38,9 @@ The E216 negative-result test is promoted to a passing safety regression in the 
 ## Next experiment
 
 Inject a crash after lock acquisition and after temporary-file creation. Verify canonical data preservation, explicitly document safe manual recovery, then design a durable generation-based protocol and optional single-writer ownership for multi-client deployment.
+
+## First validation result
+
+At commit `50c13b25ac2b8909979a79c8d3c74e03cf5a6386`, [E217 Actions run 40092671083](https://github.com/stoicsatvik/Xtension/actions/runs/40092671083) passed the real-filesystem child-process suite **4/4** and E213-E215 regressions **8/8**; syntax checks also passed. The inherited E214 and E215 workflows passed at the same head. This confirms the tested fail-closed properties, not crash safety or multi-client merge correctness.
+
+The E216 known-red result is still available in its separate draft PR #9. E217 is intentionally stacked on that PR and remains unmerged.
