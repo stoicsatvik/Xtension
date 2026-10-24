@@ -35,7 +35,9 @@ Each phase uses a unique temporary HOME and independent Node child processes. Th
 
 ## Results
 
-Pending exact-head CI. Record the passing and failing phases, commit SHA, and workflow links after execution. Keep negative results rather than silently adjusting assertions.
+At experimental head `079a39af31a88b6f6fff4f83c709237f0e70dc9f`, [E218 Actions run 40096998201](https://github.com/stoicsatvik/Xtension/actions/runs/40096998201) completed successfully. The dedicated workflow verified **3/3 hard-crash phases**, the E217 **4/4 cross-process regressions**, the E213–E215 **8/8 existing regressions**, and syntax checks. Inherited E214, E215, and E217 workflows also completed successfully at this head. No unexpected negative result was observed in these tested phases; this does not establish general crash or power-loss safety.
+
+This documentation commit requires a final exact-head CI recheck.
 
 ## Next falsification
 
