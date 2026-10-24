@@ -45,6 +45,17 @@ async function bridgeFetch(path, config, options = {}) {
   return body;
 }
 
+// A completion from an old pairing must not restore revoked credentials.
+// Chrome storage has no compare-and-swap primitive, so this is a best-effort
+// check at the async completion boundary, not an atomic cross-context CAS.
+async function updateConnectionMetadata(active, metadata) {
+  const stored = await chrome.storage.local.get(MCP_CONFIG_KEY);
+  const current = stored[MCP_CONFIG_KEY];
+  if (!current?.enabled || current.token !== active.token) return false;
+  await chrome.storage.local.set({ [MCP_CONFIG_KEY]: { ...current, ...metadata } });
+  return true;
+}
+
 async function syncNow(config = null) {
   const active = config ?? await getConfig();
   if (!active) return { connected: false, reason: "not-configured" };
@@ -53,9 +64,7 @@ async function syncNow(config = null) {
     method: "POST",
     body: JSON.stringify({ snapshot })
   });
-  await chrome.storage.local.set({
-    [MCP_CONFIG_KEY]: { ...active, lastSyncAt: Date.now(), lastError: null }
-  });
+  await updateConnectionMetadata(active, { lastSyncAt: Date.now(), lastError: null });
   return { connected: true, ...(result.status ?? {}) };
 }
 
@@ -203,12 +212,9 @@ async function pollLoop(generation) {
       }
       if (payload.commands?.length) await syncNow(config);
     } catch (error) {
-      await chrome.storage.local.set({
-        [MCP_CONFIG_KEY]: {
-          ...config,
-          lastError: error instanceof Error ? error.message : String(error),
-          lastErrorAt: Date.now()
-        }
+      await updateConnectionMetadata(config, {
+        lastError: error instanceof Error ? error.message : String(error),
+        lastErrorAt: Date.now()
       });
       await new Promise((resolve) => setTimeout(resolve, 3000));
     }
