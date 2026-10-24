@@ -15,6 +15,12 @@ let loopGeneration = 0;
 let syncTimer = null;
 const commandsInFlight = new Set();
 
+class RevokedPairingError extends Error {}
+
+async function assertPairingCurrent(isAuthorized) {
+  if (!(await isAuthorized())) throw new RevokedPairingError("MCP pairing was revoked before the browser action.");
+}
+
 async function getConfig() {
   const stored = await chrome.storage.local.get(MCP_CONFIG_KEY);
   const value = stored[MCP_CONFIG_KEY];
@@ -68,10 +74,13 @@ async function syncNow(config = null) {
   return { connected: true, ...(result.status ?? {}) };
 }
 
-async function saveVerdict(extensionId, verdict) {
+async function saveVerdict(extensionId, verdict, isAuthorized) {
   const storageKey = LOCAL_EVIDENCE_KEYS.preferences;
   const stored = await chrome.storage.local.get(storageKey);
-  const preferences = stored[storageKey] ?? {};
+  // The polling check occurred before this asynchronous read. Recheck at the
+  // action boundary, and avoid mutating Chrome storage object aliases.
+  await assertPairingCurrent(isAuthorized);
+  const preferences = { ...(stored[storageKey] ?? {}) };
   preferences[extensionId] = {
     ...(preferences[extensionId] ?? {}),
     verdict,
@@ -82,26 +91,27 @@ async function saveVerdict(extensionId, verdict) {
   return { ok: true, verdict };
 }
 
-async function sendWorker(message) {
+async function sendWorker(message, isAuthorized) {
+  await assertPairingCurrent(isAuthorized);
   const response = await chrome.runtime.sendMessage(message);
   if (response?.error) throw new Error(response.error);
   return response;
 }
 
-async function executeCommand(command) {
+async function executeCommand(command, isAuthorized) {
   const payload = command?.payload ?? {};
   switch (command?.type) {
     case "set-verdict":
       if (!["essential", "optional", "unnecessary"].includes(payload.verdict)) {
         throw new Error("Unsupported verdict.");
       }
-      return saveVerdict(payload.extensionId, payload.verdict);
+      return saveVerdict(payload.extensionId, payload.verdict, isAuthorized);
     case "start-trial":
-      return sendWorker({ type: "trial:start", extensionId: payload.extensionId, days: payload.days ?? 7 });
+      return sendWorker({ type: "trial:start", extensionId: payload.extensionId, days: payload.days ?? 7 }, isAuthorized);
     case "restore-extension":
-      return sendWorker({ type: "extension:enable", extensionId: payload.extensionId });
+      return sendWorker({ type: "extension:enable", extensionId: payload.extensionId }, isAuthorized);
     case "uninstall-extension":
-      return sendWorker({ type: "extension:uninstall", extensionId: payload.extensionId });
+      return sendWorker({ type: "extension:uninstall", extensionId: payload.extensionId }, isAuthorized);
     default:
       throw new Error(`Unsupported MCP bridge command: ${command?.type ?? "unknown"}`);
   }
@@ -152,22 +162,23 @@ async function checkLocalApproval(command) {
   return state;
 }
 
-export async function executeCommandOnce(command) {
+export async function executeCommandOnce(command, isAuthorized = async () => true) {
   if (commandsInFlight.has(command.id)) return null;
   commandsInFlight.add(command.id);
   try {
-    return await executeCommandOnceLocked(command);
+    return await executeCommandOnceLocked(command, isAuthorized);
   } finally {
     commandsInFlight.delete(command.id);
   }
 }
 
-async function executeCommandOnceLocked(command) {
+async function executeCommandOnceLocked(command, isAuthorized) {
   const cached = await readCachedCommandResult(command.id);
   if (cached) return cached;
 
   let result;
   try {
+    await assertPairingCurrent(isAuthorized);
     if (requiresMcpApproval(command.type)) {
       const state = await checkLocalApproval(command);
       if (state === "pending") return null;
@@ -177,9 +188,14 @@ async function executeCommandOnceLocked(command) {
           : "Xtension action requires a fresh local approval (expired, changed, or consumed).");
       }
     }
-    const value = await executeCommand(command);
+    // Approval checks and reads can suspend execution while pairing changes.
+    await assertPairingCurrent(isAuthorized);
+    const value = await executeCommand(command, isAuthorized);
     result = { ok: true, value };
   } catch (error) {
+    // A revoked command was never executed. Do not cache a failure receipt
+    // under its ID, which could poison a future valid pairing.
+    if (error instanceof RevokedPairingError) return null;
     result = {
       ok: false,
       error: error instanceof Error ? error.message : String(error)
@@ -219,7 +235,7 @@ async function pollLoop(generation) {
       if (!(await isCurrentPollGeneration(generation, config))) return;
       for (const command of payload.commands ?? []) {
         if (!(await isCurrentPollGeneration(generation, config))) return;
-        const result = await executeCommandOnce(command);
+        const result = await executeCommandOnce(command, () => isCurrentPollGeneration(generation, config));
         if (!(await isCurrentPollGeneration(generation, config))) return;
         if (result !== null) await postCommandResult(config, command, result);
       }
