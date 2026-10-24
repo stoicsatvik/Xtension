@@ -15,6 +15,16 @@ let loopGeneration = 0;
 let syncTimer = null;
 const commandsInFlight = new Set();
 
+// Serialize local dashboard pairing transitions with browser mutations.
+// This orders writes within this service worker; direct storage changes from
+// other extension contexts can still race a Chrome storage commit.
+let localMutationQueue = Promise.resolve();
+function withLocalMutation(task) {
+  const operation = localMutationQueue.then(task);
+  localMutationQueue = operation.catch(() => {});
+  return operation;
+}
+
 class RevokedPairingError extends Error {}
 
 async function assertPairingCurrent(isAuthorized) {
@@ -169,7 +179,7 @@ export async function executeCommandOnce(command, isAuthorized = async () => tru
   if (commandsInFlight.has(command.id)) return null;
   commandsInFlight.add(command.id);
   try {
-    return await executeCommandOnceLocked(command, isAuthorized);
+    return await withLocalMutation(() => executeCommandOnceLocked(command, isAuthorized));
   } finally {
     commandsInFlight.delete(command.id);
   }
@@ -294,14 +304,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const token = String(message.token ?? "").trim();
       if (token.length < 32) throw new Error("Bridge token is invalid.");
       const config = { enabled: true, token, configuredAt: Date.now(), lastError: null };
-      await chrome.storage.local.set({ [MCP_CONFIG_KEY]: config });
+      await withLocalMutation(() => chrome.storage.local.set({ [MCP_CONFIG_KEY]: config }));
       return syncNow(config);
     })());
   }
   if (message.type === "mcp:disconnect") {
     return respond((async () => {
-      loopGeneration += 1;
-      await chrome.storage.local.remove([MCP_CONFIG_KEY, MCP_APPROVALS_KEY]);
+      await withLocalMutation(async () => {
+        // The disconnect only takes effect after already-started local writes
+        // complete. Never report revocation before a pending write can land.
+        loopGeneration += 1;
+        await chrome.storage.local.remove([MCP_CONFIG_KEY, MCP_APPROVALS_KEY]);
+      });
       return { connected: false };
     })());
   }
@@ -313,7 +327,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         ({ id, type, extensionId, days, expiresAt })))());
   }
   if (message.type === "mcp:approve" || message.type === "mcp:deny") {
-    return respond((async () => {
+    return respond(withLocalMutation(async () => {
       // A remote MCP client can enqueue a request but cannot approve it.
       if (sender.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL("dashboard.html")) {
         throw new Error("Only the local Xtension dashboard can approve MCP actions.");
@@ -323,7 +337,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const decision = message.type === "mcp:approve" ? "approved" : "denied";
       await saveApprovals(decideMcpApproval(records, id, decision));
       return { ok: true, id, decision };
-    })());
+    }));
   }
   if (message.type === "mcp:status") {
     return respond((async () => {

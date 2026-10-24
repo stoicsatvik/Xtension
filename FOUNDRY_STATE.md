@@ -258,3 +258,25 @@ Details: `research/E226_revocation_commit_races.md`. Next: prototype
 serialized bridge-action/disconnect ordering and separately test cross-context
 token changes, approval-store commit barriers, and real Chrome lifecycle.
 No merge, deployment, live browser state, or outreach.
+
+
+## E227 local pairing-transition serialization — 2026-10-25
+
+Draft PR #20 is stacked on E226 PR #19 and remains unmerged.
+Controlled browser-storage commit barriers showed that the original local
+`mcp:disconnect` and `mcp:configure` handlers could complete while an
+already-started MCP preference or approval write remained suspended.
+[Red E227 CI #40137236128](https://github.com/stoicsatvik/Xtension/actions/runs/40137236128):
+**3/4 tests failed**; the idle-disconnect control passed.
+
+A single in-process queue now orders command actions and local dashboard
+approve/deny, configure and disconnect mutations. The four new tests and
+inherited E225/E226 checks passed at implementation-head
+[CI #40137261301](https://github.com/stoicsatvik/Xtension/actions/runs/40137261301).
+See `research/E227_local_revocation_serialization.md` for the exact contract
+and preserved negative result. Verify final exact-head CI after documentation.
+
+**Not established:** cross-context atomic revocation, prompt cancellation of
+hung browser writes, worker restart safety, or real Chrome behavior. The E226
+expected-failing external revocation/commit assertion remains unresolved.
+No merge, deployment, real browser changes or outreach.
