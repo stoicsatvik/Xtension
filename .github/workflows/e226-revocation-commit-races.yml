@@ -1,0 +1,22 @@
+name: E226 revocation commit races
+on:
+  push:
+    branches:
+      - research/e226-revocation-commit-races-20261025
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  revocation-races:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts --no-package-lock
+      - name: Revocation race regression and preserved expected failure
+        run: npx vitest run tests/mcp-bridge-revocation-commit-races.test.js
+      - name: Agent syntax
+        run: node --check agent/background-mcp-bridge.js

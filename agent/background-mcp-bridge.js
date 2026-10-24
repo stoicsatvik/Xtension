@@ -138,8 +138,11 @@ async function saveApprovals(records) {
   await chrome.storage.local.set({ [MCP_APPROVALS_KEY]: records });
 }
 
-async function checkLocalApproval(command) {
+async function checkLocalApproval(command, isAuthorized) {
   const records = await readApprovals();
+  // A disconnect or rotation may complete while the approval read is pending.
+  // Do not recreate or consume an approval under an obsolete pairing.
+  await assertPairingCurrent(isAuthorized);
   const state = approvalState(records, command);
   if (state === "missing") {
     // Keep the command leased in the local MCP queue until the user explicitly
@@ -180,7 +183,7 @@ async function executeCommandOnceLocked(command, isAuthorized) {
   try {
     await assertPairingCurrent(isAuthorized);
     if (requiresMcpApproval(command.type)) {
-      const state = await checkLocalApproval(command);
+      const state = await checkLocalApproval(command, isAuthorized);
       if (state === "pending") return null;
       if (state !== "approved") {
         throw new Error(state === "denied"
