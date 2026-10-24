@@ -56,3 +56,22 @@ limitations: `research/E214_snapshot_revision_aliasing.md`.
 **Next:** test two local bridge processes and simulated crashes around
 temporary-file rename, without touching live browser extensions. No merge,
 deployment, paid action, or outreach.
+
+
+## E215 corrupted persisted-state recovery gate — 2026-10-24
+
+Stacked draft E215 branch follows PR #7. Real-filesystem subprocess tests
+reproduced a silent state reset on corrupt JSON and a non-object JSON root:
+**2/4 passed, 2/4 failed** in [red CI 40084706384](https://github.com/stoicsatvik/Xtension/actions/runs/40084706384).
+The correction distinguishes legitimate ENOENT initialization from corrupted
+or unreadable state and refuses to overwrite damaged canonical bytes.
+All tests use disposable HOME directories. Green CI at commit
+`2a5cbf7ac66884db351033fa025bc7057165c059`:
+[run 40084743463](https://github.com/stoicsatvik/Xtension/actions/runs/40084743463).
+The full falsification and limits are in
+`research/E215_persisted_state_corruption.md`.
+
+**Unresolved:** two processes may still lose updates, temp-file rename is not
+fsync-durable, and no actual browser worker lifecycle was exercised.
+Next falsification: two independent writers on one disposable state path,
+then crash injection before and after rename. Do not merge/deploy automatically.

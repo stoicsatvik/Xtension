@@ -1,0 +1,23 @@
+name: E215 corrupt persisted state falsification
+on:
+  push:
+    branches:
+      - research/e215-corrupt-state-fail-closed-20261024
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  state-recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: E215 isolated real-filesystem crash/corruption controls
+        run: node --test mcp/node-tests/persisted-state-corruption.mjs
+      - name: E213 and E214 regression controls
+        run: node --test mcp/node-tests/snapshot-persistence-order.mjs mcp/node-tests/snapshot-revision-aliasing.mjs
+      - name: Syntax check
+        run: node --check mcp/src/state-store.mjs
