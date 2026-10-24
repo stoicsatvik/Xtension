@@ -194,7 +194,8 @@ export function createBridgeStore({
 }) {
   const state = {
     lastSyncAt: initialState?.lastSyncAt ?? 0,
-    snapshot: initialState?.snapshot ?? {}
+    // Readers must never share mutable references with the caller.
+    snapshot: structuredClone(initialState?.snapshot ?? {})
   };
   const commands = [];
   const waiters = new Map();
@@ -210,9 +211,6 @@ export function createBridgeStore({
     revisionId: initialState?.revisionId ?? null
   };
   let lastCommandState = commandStateFingerprint(state.snapshot);
-  // Track the newest queued revision. A rejected write may roll the visible
-  // state back only if no newer update has already been accepted.
-  let newestQueuedRevisionId = null;
 
   function pruneCompleted() {
     const cutoff = now() - dedupeWindowMs;
@@ -331,45 +329,29 @@ export function createBridgeStore({
     waitForCommands,
     async updateSnapshot(snapshot) {
       const sanitized = sanitizeSnapshot(snapshot);
-      // The HTTP boundary supplies JSON, but callers of this store can still
-      // mutate nested input objects after updateSnapshot returns a promise.
-      const acceptedSnapshot = structuredClone(sanitized);
-      const nextCommandState = commandStateFingerprint(acceptedSnapshot);
-      if (nextCommandState !== lastCommandState) {
-        // A previous success cannot stand in for a new request after Chrome
-        // extension state, a trial, or a local preference changes.
-        completedByFingerprint.clear();
-        lastCommandState = nextCommandState;
-      }
-      state.snapshot = acceptedSnapshot;
-      state.lastSyncAt = now();
-      // A queued disk revision must also be detached from the exposed live
-      // state. Otherwise another consumer can change a not-yet-written value.
+      // Acceptance captures a private revision, but must not publish it.
+      // MCP readers and /health expose only the latest successful disk write.
       const revision = {
-        lastSyncAt: state.lastSyncAt,
-        snapshot: structuredClone(acceptedSnapshot),
+        lastSyncAt: now(),
+        snapshot: structuredClone(sanitized),
         revisionId: crypto.randomUUID()
       };
-      newestQueuedRevisionId = revision.revisionId;
       const write = persistQueue.then(async () => {
-        try {
-          await persistSnapshot(revision, lastPersistedRevision);
-          lastPersistedRevision = structuredClone(revision);
-        } catch (error) {
-          // The caller receives a rejected sync (HTTP 409 on a CAS conflict).
-          // Do not continue exposing the rejected snapshot as if it were
-          // committed. A later queued revision owns the live state until its
-          // own persistence succeeds or fails.
-          if (newestQueuedRevisionId === revision.revisionId) {
-            state.snapshot = structuredClone(lastPersistedRevision.snapshot);
-            state.lastSyncAt = lastPersistedRevision.lastSyncAt;
-            lastCommandState = commandStateFingerprint(state.snapshot);
-            completedByFingerprint.clear();
-          }
-          throw error;
+        await persistSnapshot(revision, lastPersistedRevision);
+        // Commit the visible revision only after persistence succeeds.
+        // Queued writes remain serialized, so each successful revision is
+        // published in order, even when a later write is still pending.
+        lastPersistedRevision = structuredClone(revision);
+        state.snapshot = structuredClone(revision.snapshot);
+        state.lastSyncAt = revision.lastSyncAt;
+        const nextCommandState = commandStateFingerprint(state.snapshot);
+        if (nextCommandState !== lastCommandState) {
+          // Invalidate cached actions at commit, not at tentative acceptance.
+          completedByFingerprint.clear();
+          lastCommandState = nextCommandState;
         }
       });
-      // A failed disk write must not poison the queue for future snapshots.
+      // A failed disk write must not poison the queue or visible evidence.
       persistQueue = write.catch(() => {});
       await write;
       return compactStatus();
