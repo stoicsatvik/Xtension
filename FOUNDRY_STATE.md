@@ -218,3 +218,25 @@ sync. See `research/E224_revoked_poll_command_fence.md` and the scoped CI.
 **Not proven:** atomic revocation across asynchronous command execution,
 real Chrome worker lifecycle, cross-context storage CAS, or HTTP 409 recovery.
 No merge, deployment, real browser state, user data, or external outreach.
+
+
+## E225 revoked action-boundary falsification — 2026-10-25
+
+Draft PR #18 is stacked on E224 PR #17, not merged. E224's poll-level
+revocation checks left a time-of-check/time-of-use race during asynchronous
+preference reads. The test-only head `108154557` failed **2/3** checks:
+both rotation and disconnect caused one stale preferences mutation after the
+pairing was revoked; the still-current pairing control passed.
+[Preserved red CI #40128466644](https://github.com/stoicsatvik/Xtension/actions/runs/40128466644).
+
+E225 propagates the pairing/generation predicate into command execution and
+revalidates after asynchronous reads, before Chrome preference writes or worker
+dispatch. Revoked pre-action commands do not create cached failure receipts.
+See `research/E225_revoked_action_boundary.md` for the full experiment,
+implementation, and limitations.
+
+**Unresolved:** no atomic transaction covers authorization and browser writes.
+A revocation after the final check can still race the asynchronous mutation;
+approval records may also be written after disconnect. Next: instrument a
+barrier *inside* storage.set and test delayed approval-record writes.
+No merge, deployment, real browser data, or external outreach.
