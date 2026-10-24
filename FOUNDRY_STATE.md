@@ -186,3 +186,18 @@ Verify final exact-head CI after documentation.
 **Unproven:** real Chrome worker lifecycle, HTTP 409 reconciliation,
 cross-process reads, power-loss durability, abandoned-lock recovery.
 No merge, deployment, user-data access, or outreach.
+
+
+## E223 MCP pairing-token stale-completion race — 2026-10-24
+
+Draft E223 branch stacked on E222 PR #15. An in-flight sync authenticated
+with revoked token A completed after rotation to B and rewrote the Chrome
+local configuration back to A. Deterministic mocked-browser test failed on
+the original implementation at `78df631b`: [red CI #40119557984](https://github.com/stoicsatvik/Xtension/actions/runs/40119557984).
+
+A narrow guard now re-reads current pairing state before committing successful
+sync or polling-error metadata, discarding obsolete-token updates. See
+`research/E223_token_rotation_race.md` and the E223 workflow. **Not proven:**
+atomic cross-context compare-and-set, stale command response suppression,
+real Chrome worker suspend/resume, or HTTP 409 reconciliation. No merge,
+deployment, user-data access, or outreach.
