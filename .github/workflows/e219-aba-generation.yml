@@ -1,0 +1,24 @@
+name: E219 ABA generation falsification
+on:
+  push:
+    branches:
+      - research/e219-aba-revision-generation-20261024
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  aba-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: E219 ABA regression
+        run: node --test mcp/node-tests/experiments/aba-revision-generation.mjs
+      - name: E217-E218 concurrency and crash regressions
+        run: node --test mcp/node-tests/experiments/stale-process-overwrite.mjs mcp/node-tests/experiments/crash-phase-falsification.mjs
+      - name: E213-E215 persistence regressions
+        run: node --test mcp/node-tests/snapshot-persistence-order.mjs mcp/node-tests/snapshot-revision-aliasing.mjs mcp/node-tests/persisted-state-corruption.mjs
+      - name: Syntax validation
+        run: node --check mcp/src/state-store.mjs
