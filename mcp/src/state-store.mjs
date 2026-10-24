@@ -143,6 +143,8 @@ export function createBridgeStore({
   const waiters = new Map();
   const completedByFingerprint = new Map();
   const completedIds = new Map();
+  // Keep on-disk revisions ordered even when two /v1/sync requests overlap.
+  let persistQueue = Promise.resolve();
   let lastCommandState = commandStateFingerprint(state.snapshot);
 
   function pruneCompleted() {
@@ -271,7 +273,13 @@ export function createBridgeStore({
       }
       state.snapshot = sanitized;
       state.lastSyncAt = now();
-      await persistSnapshot(state);
+      // Capture an immutable revision. Passing the live mutable state into an
+      // asynchronous writer can persist a later snapshot under an older sync.
+      const revision = { lastSyncAt: state.lastSyncAt, snapshot: sanitized };
+      const write = persistQueue.then(() => persistSnapshot(revision));
+      // A failed disk write must not poison the queue for future snapshots.
+      persistQueue = write.catch(() => {});
+      await write;
       return compactStatus();
     },
     takeCommands(limit = 20) {

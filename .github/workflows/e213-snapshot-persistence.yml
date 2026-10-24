@@ -1,0 +1,23 @@
+name: E213 snapshot persistence concurrency regression
+on:
+  push:
+    branches:
+      - foundry/e213-snapshot-persistence-order-20261024
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  snapshot-persistence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: E213 source-executed concurrency regression
+        run: node --test mcp/node-tests/snapshot-persistence-order.mjs
+      - name: Existing MCP regressions
+        run: npm --prefix mcp test
+      - name: Syntax validation
+        run: npm --prefix mcp run check
