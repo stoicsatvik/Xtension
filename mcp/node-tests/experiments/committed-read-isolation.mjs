@@ -46,14 +46,22 @@ test("pending rejected sync is never observable, before or after rejection", asy
     persistSnapshot: async () => { started.resolve(); await gate.promise; throw new Error("injected conflict"); }
   });
   const update = store.updateSnapshot(snapshot("unnecessary"));
+  // Observe the rejection immediately to avoid an unhandled promise if a
+  // pre-fix visibility assertion fails while the deferred write settles.
+  const outcome = update.then(() => null, (error) => error);
   await started.promise;
+  let pendingSnapshot;
+  let pendingTime;
   try {
-    assert.deepEqual(store.state.snapshot, snapshot("essential"));
-    assert.equal(store.compactStatus().lastSyncAt, 101);
+    pendingSnapshot = structuredClone(store.state.snapshot);
+    pendingTime = store.compactStatus().lastSyncAt;
   } finally {
     gate.resolve();
   }
-  await assert.rejects(update, /injected conflict/);
+  const rejection = await outcome;
+  assert.match(rejection?.message ?? "", /injected conflict/);
+  assert.deepEqual(pendingSnapshot, snapshot("essential"));
+  assert.equal(pendingTime, 101);
   assert.deepEqual(store.state.snapshot, snapshot("essential"));
   assert.equal(store.state.lastSyncAt, 101);
 });
@@ -107,13 +115,18 @@ test("command deduplication changes at commit, not at uncommitted acceptance", a
   assert.deepEqual(await store.enqueueCommand("set-verdict", payload, 2000), { ok: true });
   const update = store.updateSnapshot(snapshot("unnecessary"));
   await started.promise;
-  try {
-    assert.deepEqual(await store.enqueueCommand("set-verdict", payload, 2000), { ok: true });
-    assert.equal(store.commands.length, 0);
-  } finally {
-    gate.resolve();
+  const during = store.enqueueCommand("set-verdict", payload, 2000);
+  const queuedDuring = store.commands.length;
+  // Complete a wrongly queued command as well, so a pre-fix test reports
+  // the actual invariant failure rather than a command timeout.
+  if (queuedDuring) {
+    const [wronglyQueued] = store.takeCommands();
+    store.completeCommand(wronglyQueued.id, { ok: true });
   }
+  gate.resolve();
   await update;
+  await during;
+  assert.equal(queuedDuring, 0, "tentative sync must not invalidate committed command cache");
   const afterCommit = store.enqueueCommand("set-verdict", payload, 2000);
   assert.equal(store.commands.length, 1, "committed state change must invalidate cached command result");
   const [next] = store.takeCommands();
