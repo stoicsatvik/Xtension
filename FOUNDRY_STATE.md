@@ -75,3 +75,24 @@ The full falsification and limits are in
 fsync-durable, and no actual browser worker lifecycle was exercised.
 Next falsification: two independent writers on one disposable state path,
 then crash injection before and after rename. Do not merge/deploy automatically.
+
+
+## E216 cross-process stale overwrite — 2026-10-24
+
+Draft PR #9 is stacked on E215 PR #8 and remains unmerged. An isolated,
+deterministic two-child-process experiment loaded the empty state in a stale
+writer, persisted a newer revision (timestamp 2000) from another process,
+then released the stale writer (timestamp 1000). The stale writer replaced
+the canonical state and discarded the newer preference. The single-writer
+control passed, the stale-writer invariant failed: **1/2 experiment tests**.
+Existing E213-E215 regressions **8/8 passed**.
+
+[Exact-head E216 workflow 40088829460](https://github.com/stoicsatvik/Xtension/actions/runs/40088829460)
+reports SUCCESS **because it explicitly verifies the expected failure**,
+not because multi-process safety is fixed. See
+`research/E216_cross_process_stale_overwrite.md` for protocol and full
+counterexample. No production code was changed, no live state accessed.
+
+**Next:** design a fail-closed writer-ownership or lock-plus-revision protocol,
+including crash recovery, stale-lock handling, and two simultaneous writers.
+Do not merge this branch as a production correction.
