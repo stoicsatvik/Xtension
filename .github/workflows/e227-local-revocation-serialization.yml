@@ -1,0 +1,24 @@
+name: E227 local revocation serialization
+on:
+  push:
+    branches:
+      - research/e227-local-revocation-serialization-20261025
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  local-revocation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts --no-package-lock
+      - name: E227 local transition regressions
+        run: npx vitest run tests/mcp-bridge-local-revocation-serialization.test.js
+      - name: Inherited E225-E226 revocation regressions
+        run: npx vitest run tests/mcp-bridge-revocation-commit-races.test.js tests/mcp-bridge-revoked-action-boundary.test.js tests/mcp-bridge-consent.test.js
+      - name: Syntax
+        run: node --check agent/background-mcp-bridge.js
