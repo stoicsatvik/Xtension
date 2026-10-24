@@ -74,3 +74,33 @@ test("a rejected revision does not prevent a later successful revision", async (
   assert.equal(attempts, 2);
   assert.equal(store.state.snapshot.preferences.abc.verdict, "optional");
 });
+
+test("an older rejected write cannot roll back a newer queued successful snapshot", async () => {
+  let releaseFirst;
+  const gate = new Promise((resolve) => { releaseFirst = resolve; });
+  let attempts = 0;
+  const store = createBridgeStore({
+    token: "e220-isolated",
+    initialState: { lastSyncAt: 0, snapshot: {} },
+    now: (() => { let clock = 500; return () => ++clock; })(),
+    persistSnapshot: async () => {
+      if (++attempts === 1) {
+        await gate;
+        throw new Error("older queued write rejected");
+      }
+    }
+  });
+  const older = store.updateSnapshot({ preferences: { abc: { verdict: "essential" } } });
+  const newer = store.updateSnapshot({ preferences: { abc: { verdict: "optional" } } });
+  try {
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(attempts, 1);
+  } finally {
+    releaseFirst();
+  }
+  await assert.rejects(older, /older queued write rejected/);
+  await newer;
+  assert.equal(attempts, 2);
+  assert.equal(store.state.lastSyncAt, 502);
+  assert.equal(store.state.snapshot.preferences.abc.verdict, "optional");
+});
