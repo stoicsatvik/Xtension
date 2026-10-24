@@ -1,0 +1,23 @@
+name: E214 snapshot revision isolation
+on:
+  push:
+    branches:
+      - research/e214-snapshot-revision-aliasing-20261024
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  snapshot-revision:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: E214 aliasing falsification
+        run: node --test mcp/node-tests/snapshot-revision-aliasing.mjs
+      - name: E213 serialization regression
+        run: node --test mcp/node-tests/snapshot-persistence-order.mjs
+      - name: State-store syntax
+        run: node --check mcp/src/state-store.mjs
