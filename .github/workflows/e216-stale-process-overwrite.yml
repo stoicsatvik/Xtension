@@ -1,8 +1,8 @@
-name: E216 cross-process stale-writer falsification
+name: E217 cross-process CAS lock regression
 on:
   push:
     branches:
-      - research/e216-stale-process-overwrite-20261024
+      - research/e217-cross-process-cas-lock-20261024
   pull_request:
 permissions:
   contents: read
@@ -15,23 +15,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: E216 isolated two-process falsification (expected red)
-        id: falsification
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -o pipefail
-          node --test mcp/node-tests/experiments/stale-process-overwrite.mjs 2>&1 | tee e216-falsification.log
-      - name: Verify the specific stale-writer counterexample was reproduced
-        if: always()
-        shell: bash
-        run: |
-          test "${{ steps.falsification.outcome }}" = "failure"
-          grep -F "E216 stale writer regressed canonical timestamp" e216-falsification.log
-          grep -F "not ok" e216-falsification.log
+      - name: E217 isolated real-filesystem two-process regressions
+        run: node --test mcp/node-tests/experiments/stale-process-overwrite.mjs
       - name: Existing E213-E215 regressions
-        run: |
-          node --test mcp/node-tests/snapshot-persistence-order.mjs mcp/node-tests/snapshot-revision-aliasing.mjs mcp/node-tests/persisted-state-corruption.mjs
+        run: node --test mcp/node-tests/snapshot-persistence-order.mjs mcp/node-tests/snapshot-revision-aliasing.mjs mcp/node-tests/persisted-state-corruption.mjs
       - name: Syntax checks
         run: |
           node --check mcp/src/state-store.mjs
