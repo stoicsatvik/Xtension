@@ -96,3 +96,26 @@ counterexample. No production code was changed, no live state accessed.
 **Next:** design a fail-closed writer-ownership or lock-plus-revision protocol,
 including crash recovery, stale-lock handling, and two simultaneous writers.
 Do not merge this branch as a production correction.
+
+
+## E219 ABA generation isolation — 2026-10-24
+
+Stacked draft E219 branch follows E218 PR #11. The E217 full-logical-state
+CAS failed an A -> B -> A cycle when all three snapshots had the same
+timestamp and the first/last payloads were identical. The original stale
+process incorrectly wrote after observing the first A. The reproducible
+independent-process regression failed as expected in
+[red CI 40101305487](https://github.com/stoicsatvik/Xtension/actions/runs/40101305487).
+
+The correction stores a fresh durable UUID generation with every accepted
+revision and compares that generation under the cross-process lock. Legacy
+files upgrade on first write; invalid generation metadata fails closed.
+[Initial green CI 40101347672](https://github.com/stoicsatvik/Xtension/actions/runs/40101347672)
+passed the ABA, E217, E218, and E213-E215 regressions before two additional
+migration/malformed-generation tests and documentation were added. See
+`research/E219_aba_revision_generation.md` for the precise claim and
+limitations. The final exact-head CI must be verified separately.
+
+**Unproven:** power-loss durability, hostile on-disk rollback, stale-lock
+auto-recovery, real Chrome worker integration. No deployment, merge, or
+outreach performed.

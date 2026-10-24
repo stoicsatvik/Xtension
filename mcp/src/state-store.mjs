@@ -124,10 +124,20 @@ export async function readPersistedState() {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       throw new Error("Persisted state root must be a JSON object.");
     }
-    return {
+    // Persisted generation identifiers prevent ABA: a stale process must
+    // not accept A -> B -> A merely because the logical JSON looks identical.
+    // Keep this metadata non-enumerable in the public read result to preserve
+    // the existing state shape for callers and legacy persisted files.
+    const revisionId = Object.hasOwn(parsed, "revisionId") ? parsed.revisionId : null;
+    if (revisionId !== null && (typeof revisionId !== "string" || !revisionId)) {
+      throw new Error("Persisted revisionId must be a nonempty string.");
+    }
+    const state = {
       lastSyncAt: Number(parsed.lastSyncAt) || 0,
       snapshot: sanitizeSnapshot(parsed.snapshot ?? {})
     };
+    Object.defineProperty(state, "revisionId", { value: revisionId, enumerable: false });
+    return state;
   } catch (error) {
     // Fail closed: silently replacing a corrupt state with an empty one
     // would let the next /v1/sync overwrite the only surviving evidence.
@@ -161,7 +171,9 @@ async function persistState(revision, expectedRevision) {
     // Both the check and rename must happen while holding the same lock.
     // Comparing the full revision also catches equal-timestamp conflicts.
     const current = await readPersistedState();
-    if (JSON.stringify(current) !== JSON.stringify(expectedRevision)) {
+    if ((current.revisionId ?? null) !== (expectedRevision.revisionId ?? null) ||
+        JSON.stringify({ lastSyncAt: current.lastSyncAt, snapshot: current.snapshot }) !==
+        JSON.stringify({ lastSyncAt: expectedRevision.lastSyncAt, snapshot: expectedRevision.snapshot })) {
       throw stateConflict("Xtension persisted state changed in another process; refusing stale overwrite. Restart the bridge to reload.");
     }
     await fs.writeFile(tmp, JSON.stringify(revision, null, 2), { mode: 0o600 });
@@ -194,7 +206,8 @@ export function createBridgeStore({
   // Independent processes therefore cannot silently replace each other's data.
   let lastPersistedRevision = {
     lastSyncAt: state.lastSyncAt,
-    snapshot: structuredClone(state.snapshot)
+    snapshot: structuredClone(state.snapshot),
+    revisionId: initialState?.revisionId ?? null
   };
   let lastCommandState = commandStateFingerprint(state.snapshot);
 
@@ -331,7 +344,8 @@ export function createBridgeStore({
       // state. Otherwise another consumer can change a not-yet-written value.
       const revision = {
         lastSyncAt: state.lastSyncAt,
-        snapshot: structuredClone(acceptedSnapshot)
+        snapshot: structuredClone(acceptedSnapshot),
+        revisionId: crypto.randomUUID()
       };
       const write = persistQueue.then(async () => {
         await persistSnapshot(revision, lastPersistedRevision);
