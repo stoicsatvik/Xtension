@@ -25,14 +25,18 @@ describe("MCP command result cache", () => {
 });
 
 describe("MCP crash-intent journal", () => {
-  it("retains pending intents under completed-receipt churn", () => {
+  it("retains pending and completed evidence instead of evicting either at capacity", () => {
     let records = rememberCommandIntent([], "uncertain", "fp-uncertain", 100, 3);
-    for (let i = 0; i < 9; i++) {
+    for (let i = 0; i < 2; i++) {
       records = rememberCommandResult(records, `done-${i}`, { ok: true }, i + 101, 3, `fp-${i}`);
     }
+    expect(() => rememberCommandResult(records, "done-2", { ok: true }, 103, 3, "fp-2"))
+      .toThrow(/full|journal/i);
     expect(records).toHaveLength(3);
     expect(inspectCommandReplay(records, "uncertain", "fp-uncertain")).toEqual({ state: "pending" });
     expect(inspectCommandReplay(records, "uncertain", "other")).toEqual({ state: "collision" });
+    expect(inspectCommandReplay(records, "done-0", "fp-0").state).toBe("replay");
+    expect(inspectCommandReplay(records, "done-1", "fp-1").state).toBe("replay");
   });
 
   it("rejects a new intent rather than evicting a full pending journal", () => {
