@@ -95,3 +95,25 @@ it("allows a new command ID to execute under the same pairing", async () => {
   expect(h.preferenceWrites).toBe(2);
   expect(h.stored[PREFS][EXTENSION].verdict).toBe("unnecessary");
 });
+
+it("treats equivalent JSON payloads with different key ordering as the same replay", async () => {
+  const h = harness();
+  const { executeCommandOnce } = await import("../agent/background-mcp-bridge.js");
+  const first = { id: "ordered", type: "set-verdict",
+    payload: { extensionId: EXTENSION, verdict: "essential" } };
+  const reordered = { id: "ordered", type: "set-verdict",
+    payload: { verdict: "essential", extensionId: EXTENSION } };
+  expect((await executeCommandOnce(first, async () => true, TOKEN_A)).ok).toBe(true);
+  expect((await executeCommandOnce(reordered, async () => true, TOKEN_A)).ok).toBe(true);
+  expect(h.preferenceWrites).toBe(1);
+});
+
+it("persists only a digest, never the raw bearer token, in the replay cache", async () => {
+  const h = harness();
+  const { executeCommandOnce } = await import("../agent/background-mcp-bridge.js");
+  expect((await executeCommandOnce(command("secret"), async () => true, TOKEN_A)).ok).toBe(true);
+  const records = h.stored[CACHE];
+  expect(records).toHaveLength(1);
+  expect(records[0].fingerprint).toMatch(/^[a-f0-9]{64}$/);
+  expect(JSON.stringify(records)).not.toContain(TOKEN_A);
+});
