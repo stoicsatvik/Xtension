@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   inspectCommandReplay, rememberCommandIntent, rememberCommandResult
 } from "../agent/mcp-command-cache.js";
+import { MCP_APPROVALS_KEY, pendingMcpApproval } from "../agent/mcp-approval-policy.js";
 
 const CACHE = "xtension.mcp.command-results.v1";
 const PREFS = "xtension.preferences.v1";
@@ -81,4 +82,23 @@ it("permits an existing pending identity to remain fenced at capacity", () => {
   const renewed = rememberCommandIntent(records, "pending", "fp-pending", 3, 2);
   expect(renewed).toHaveLength(2);
   expect(inspectCommandReplay(renewed, "pending", "fp-pending").state).toBe("pending");
+});
+
+it("cannot evict a completed receipt while persisting an unjournaled denied action", async () => {
+  const h = mockChrome();
+  const { executeCommandOnce } = await import("../agent/background-mcp-bridge.js");
+  for (let i = 0; i < 100; i++) {
+    expect((await executeCommandOnce(command(`cmd-${i}`), async () => true, TOKEN))?.ok)
+      .toBe(true);
+  }
+  const denied = { id: "denied", type: "uninstall-extension", payload: { extensionId: EXTENSION } };
+  h.stored[MCP_APPROVALS_KEY] = {
+    denied: { ...pendingMcpApproval(denied), status: "denied" }
+  };
+  await expect(executeCommandOnce(denied, async () => true, TOKEN))
+    .rejects.toThrow(/journal|full|capacity|reconcil/i);
+  expect(h.stored[CACHE]).toHaveLength(100);
+  expect(h.stored[CACHE].some((entry) => entry.id === "cmd-0")).toBe(true);
+  expect((await executeCommandOnce(command("cmd-0"), async () => true, TOKEN))?.ok).toBe(true);
+  expect(h.preferenceWrites).toBe(100);
 });
