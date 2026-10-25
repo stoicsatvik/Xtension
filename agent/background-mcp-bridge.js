@@ -4,7 +4,7 @@ import {
   pendingMcpApproval, requiresMcpApproval
 } from "./mcp-approval-policy.js";
 import {
-  findCommandResult,
+  inspectCommandReplay,
   MCP_COMMAND_RESULTS_KEY,
   rememberCommandResult
 } from "./mcp-command-cache.js";
@@ -162,14 +162,40 @@ async function executeCommand(command, isAuthorized) {
   }
 }
 
-async function readCachedCommandResult(commandId) {
-  const stored = await chrome.storage.local.get(MCP_COMMAND_RESULTS_KEY);
-  return findCommandResult(stored[MCP_COMMAND_RESULTS_KEY], commandId);
+// Canonicalize JSON keys so harmless payload key ordering does not invalidate
+// a legitimate redelivery. Commands arrive from JSON and cannot be cyclic.
+function canonicalCommandJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalCommandJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).filter((key) => value[key] !== undefined).sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalCommandJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value ?? null);
 }
 
-async function persistCommandResult(commandId, result) {
+async function commandReplayFingerprint(command, pairingToken) {
+  // A SHA-256 digest scopes receipts to a pairing without persisting the
+  // bearer token in the command-result cache.
+  const encoded = new TextEncoder().encode(canonicalCommandJson([
+    "xtension-mcp-command-v2", command?.id ?? null, command?.type ?? null,
+    command?.payload ?? null, pairingToken ?? null
+  ]));
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", encoded);
+  return Array.from(new Uint8Array(digest),
+    (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function readCachedCommandResult(commandId, fingerprint) {
   const stored = await chrome.storage.local.get(MCP_COMMAND_RESULTS_KEY);
-  const next = rememberCommandResult(stored[MCP_COMMAND_RESULTS_KEY], commandId, result);
+  return inspectCommandReplay(stored[MCP_COMMAND_RESULTS_KEY], commandId, fingerprint);
+}
+
+async function persistCommandResult(commandId, result, fingerprint) {
+  const stored = await chrome.storage.local.get(MCP_COMMAND_RESULTS_KEY);
+  const next = rememberCommandResult(
+    stored[MCP_COMMAND_RESULTS_KEY], commandId, result,
+    Date.now(), undefined, fingerprint
+  );
   await chrome.storage.local.set({ [MCP_COMMAND_RESULTS_KEY]: next });
 }
 
@@ -210,19 +236,29 @@ async function checkLocalApproval(command, isAuthorized) {
   return state;
 }
 
-export async function executeCommandOnce(command, isAuthorized = async () => true) {
+export async function executeCommandOnce(command, isAuthorized = async () => true, pairingToken = null) {
   if (commandsInFlight.has(command.id)) return null;
   commandsInFlight.add(command.id);
   try {
-    return await withLocalMutation(() => executeCommandOnceLocked(command, isAuthorized));
+    return await withLocalMutation(() => executeCommandOnceLocked(command, isAuthorized, pairingToken));
   } finally {
     commandsInFlight.delete(command.id);
   }
 }
 
-async function executeCommandOnceLocked(command, isAuthorized) {
-  const cached = await readCachedCommandResult(command.id);
-  if (cached) return cached;
+async function executeCommandOnceLocked(command, isAuthorized, pairingToken) {
+  const fingerprint = await commandReplayFingerprint(command, pairingToken);
+  const cached = await readCachedCommandResult(command.id, fingerprint);
+  if (cached.state === "replay") return cached.result;
+  // Legacy receipts cannot prove which payload or pairing produced them.
+  // Re-executing might duplicate a destructive operation; replaying might
+  // falsely acknowledge a different command. Require a fresh command ID.
+  if (cached.state === "legacy") {
+    return { ok: false, error: "Legacy command receipt has no replay identity; manual reconciliation required." };
+  }
+  if (cached.state === "collision") {
+    return { ok: false, error: "Command ID identity collision: previously used for a different pairing or payload." };
+  }
 
   let result;
   try {
@@ -253,7 +289,7 @@ async function executeCommandOnceLocked(command, isAuthorized) {
   // Persist before acknowledging the MCP process. If Chrome or the bridge dies
   // after the browser action but before the POST succeeds, redelivery replays
   // this result instead of repeating the browser action.
-  await persistCommandResult(command.id, result);
+  await persistCommandResult(command.id, result, fingerprint);
   return result;
 }
 
@@ -283,7 +319,7 @@ async function pollLoop(generation) {
       if (!(await isCurrentPollGeneration(generation, config))) return;
       for (const command of payload.commands ?? []) {
         if (!(await isCurrentPollGeneration(generation, config))) return;
-        const result = await executeCommandOnce(command, () => isCurrentPollGeneration(generation, config));
+        const result = await executeCommandOnce(command, () => isCurrentPollGeneration(generation, config), config.token);
         if (!(await isCurrentPollGeneration(generation, config))) return;
         if (result !== null) await postCommandResult(config, command, result);
       }
