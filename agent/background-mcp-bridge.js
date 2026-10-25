@@ -14,6 +14,16 @@ const BRIDGE_ORIGIN = "http://127.0.0.1:43128";
 let loopGeneration = 0;
 let syncTimer = null;
 const commandsInFlight = new Set();
+const activeSyncRequests = new Set();
+
+// Best-effort cancellation for HTTP evidence exports whose pairing changes.
+// Aborting a fetch cannot recall bytes already delivered to the MCP bridge.
+function abortObsoleteSyncRequests(nextConfig) {
+  const nextToken = nextConfig?.enabled ? nextConfig.token : null;
+  for (const request of activeSyncRequests) {
+    if (request.token !== nextToken) request.controller.abort();
+  }
+}
 
 // Serialize local dashboard pairing transitions with browser mutations.
 // This orders writes within this service worker; direct storage changes from
@@ -83,12 +93,30 @@ async function syncNow(config = null) {
   if (!current || current.token !== active.token) {
     return { connected: false, reason: "pairing-changed" };
   }
-  const result = await bridgeFetch("/v1/sync", active, {
-    method: "POST",
-    body: JSON.stringify({ snapshot })
-  });
-  await updateConnectionMetadata(active, { lastSyncAt: Date.now(), lastError: null });
-  return { connected: true, ...(result.status ?? {}) };
+  const controller = new AbortController();
+  const request = { token: active.token, controller };
+  activeSyncRequests.add(request);
+  try {
+    const result = await bridgeFetch("/v1/sync", active, {
+      method: "POST",
+      signal: controller.signal,
+      body: JSON.stringify({ snapshot })
+    });
+    // The network response may arrive after the pairing was revoked, even if
+    // the transport ignored AbortSignal. Never report stale success.
+    const latest = await getConfig();
+    if (controller.signal.aborted || !latest || latest.token !== active.token) {
+      return { connected: false, reason: "pairing-changed" };
+    }
+    await updateConnectionMetadata(active, { lastSyncAt: Date.now(), lastError: null });
+    if (controller.signal.aborted) return { connected: false, reason: "pairing-changed" };
+    return { connected: true, ...(result.status ?? {}) };
+  } catch (error) {
+    if (controller.signal.aborted) return { connected: false, reason: "pairing-changed" };
+    throw error;
+  } finally {
+    activeSyncRequests.delete(request);
+  }
 }
 
 async function saveVerdict(extensionId, verdict, isAuthorized) {
@@ -293,7 +321,10 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     // Only pairing/enablement changes should replace the polling generation.
     const enabledChanged = Boolean(previous?.enabled) !== Boolean(next?.enabled);
     const tokenChanged = Boolean(next?.enabled) && previous?.token !== next?.token;
-    if (enabledChanged || tokenChanged) startLoop();
+    if (enabledChanged || tokenChanged) {
+      abortObsoleteSyncRequests(next);
+      startLoop();
+    }
     return;
   }
   if (Object.values(LOCAL_EVIDENCE_KEYS).some((key) => changes[key])) scheduleSync();
@@ -311,7 +342,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const token = String(message.token ?? "").trim();
       if (token.length < 32) throw new Error("Bridge token is invalid.");
       const config = { enabled: true, token, configuredAt: Date.now(), lastError: null };
-      await withLocalMutation(() => chrome.storage.local.set({ [MCP_CONFIG_KEY]: config }));
+      await withLocalMutation(async () => {
+        await chrome.storage.local.set({ [MCP_CONFIG_KEY]: config });
+        abortObsoleteSyncRequests(config);
+      });
       return syncNow(config);
     })());
   }
@@ -322,6 +356,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         // complete. Never report revocation before a pending write can land.
         loopGeneration += 1;
         await chrome.storage.local.remove([MCP_CONFIG_KEY, MCP_APPROVALS_KEY]);
+        abortObsoleteSyncRequests(null);
       });
       return { connected: false };
     })());
