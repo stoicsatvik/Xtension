@@ -48,9 +48,24 @@ export function rememberCommandIntent(
     throw new Error("Cannot journal a command without a replay fingerprint.");
   }
   const existing = Array.isArray(records) ? records : [];
+  // A bounded receipt cache cannot silently discard a completed command:
+  // redelivery of that evicted ID would perform its browser mutation again.
+  // New actions therefore stop when every journal slot is occupied, whether
+  // the records are pending or completed. Explicit reconciliation is required.
+  const previous = existing.find((record) => record?.id === commandId);
+  if (previous) {
+    if (previous.fingerprint !== fingerprint) {
+      throw new Error("MCP command identity collision; reconcile before execution.");
+    }
+    if (previous.phase === "pending") return existing;
+    throw new Error("MCP command already completed; replay its receipt.");
+  }
+  if (existing.length >= Math.max(1, limit)) {
+    throw new Error("MCP command journal is full; reconcile retained receipts before new actions.");
+  }
   const next = [
     { id: commandId, fingerprint, phase: "pending", startedAt },
-    ...existing.filter((record) => record?.id !== commandId)
+    ...existing
   ];
   return retainPending(next, limit);
 }
@@ -60,6 +75,18 @@ export function rememberCommandResult(
   limit = MAX_MCP_COMMAND_RESULTS, fingerprint = null
 ) {
   const existing = Array.isArray(records) ? records : [];
+  if (fingerprint !== null) {
+    // Some failures (for example, a denied local approval) occur before
+    // the command's intent is written. Recording their result must not evict
+    // an older completed receipt and reopen a duplicate-action window.
+    const previous = existing.find((record) => record?.id === commandId);
+    if (previous && previous.fingerprint !== fingerprint) {
+      throw new Error("MCP command identity collision; reconcile before saving a receipt.");
+    }
+    if (!previous && existing.length >= Math.max(1, limit)) {
+      throw new Error("MCP command journal is full; cannot retain another receipt.");
+    }
+  }
   const entry = { id: commandId, result, completedAt };
   if (fingerprint !== null) {
     entry.fingerprint = fingerprint;
