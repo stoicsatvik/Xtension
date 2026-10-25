@@ -351,3 +351,29 @@ service-worker crash between browser mutation and receipt persistence
 may duplicate side effects. E226 cross-context atomic storage-commit
 revocation remains expected-failing. Four npm advisories remain
 untriaged. No merge, deployment, live user data, or outreach.
+
+
+## E231 crash-window command intent fencing — 2026-10-25
+
+Draft E231 work stacked on E230 PR #23, unmerged. A browser mutation
+could commit before its command-result receipt, leaving no durable marker
+and permitting a duplicate side effect on redelivery. Test-only
+[red CI #40153272957](https://github.com/stoicsatvik/Xtension/actions/runs/40153272957)
+failed **3/3** new crash-window contracts as predicted.
+
+The correction writes a pairing-scoped pending intent before the first
+browser action; a completed receipt replaces it afterward. Interrupted
+intents now require manual reconciliation instead of re-execution.
+Pending intents survive completed-receipt cache churn; a full pending
+journal blocks new commands rather than evicting uncertain actions.
+[Expanded green CI #40153352198](https://github.com/stoicsatvik/Xtension/actions/runs/40153352198)
+passed **3/3** E231 regressions, **7/7** inherited E230 replay tests,
+**5/5** cache unit tests, and agent syntax. Full negative evidence and
+limitations: research/E231_command_crash_intent_fence.md.
+
+**Not established:** real MV3 crash behavior, physical storage durability,
+automatic liveness for pending commands, exactly-once semantics, or
+cross-context atomicity (E226 remains expected-failing). Completed receipts
+can still age out after 100 entries; manual storage deletion defeats
+the journal. Four npm advisories remain untriaged. No merge, deployment,
+live user data, or external outreach.
