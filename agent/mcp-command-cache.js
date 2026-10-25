@@ -75,6 +75,18 @@ export function rememberCommandResult(
   limit = MAX_MCP_COMMAND_RESULTS, fingerprint = null
 ) {
   const existing = Array.isArray(records) ? records : [];
+  if (fingerprint !== null) {
+    // Some failures (for example, a denied local approval) occur before
+    // the command's intent is written. Recording their result must not evict
+    // an older completed receipt and reopen a duplicate-action window.
+    const previous = existing.find((record) => record?.id === commandId);
+    if (previous && previous.fingerprint !== fingerprint) {
+      throw new Error("MCP command identity collision; reconcile before saving a receipt.");
+    }
+    if (!previous && existing.length >= Math.max(1, limit)) {
+      throw new Error("MCP command journal is full; cannot retain another receipt.");
+    }
+  }
   const entry = { id: commandId, result, completedAt };
   if (fingerprint !== null) {
     entry.fingerprint = fingerprint;
