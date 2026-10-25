@@ -328,3 +328,26 @@ cross-context revocation or storage commits, real MV3 lifecycle behavior.
 E226's expected-failing atomic storage-commit assertion remains.
 Dependency installation also reported four untriaged npm advisories.
 No merge, deployment, live user evidence, or external outreach.
+
+
+## E230 command replay identity — 2026-10-25
+
+Draft PR #23 stacked on E229 PR #22, unmerged. Command results
+were cached by ID alone. Reusing an ID with changed payload or a
+different pairing silently replayed an old success; legacy unscoped
+receipts were equally ambiguous. [Red CI #40149070135](https://github.com/stoicsatvik/Xtension/actions/runs/40149070135):
+**3/5 failed as predicted**, 2 controls passed.
+
+The correction hashes canonical command identity and pairing into a
+SHA-256 receipt fingerprint (without persisting the bearer token),
+fails closed on collisions or legacy unscoped receipts, and retains
+idempotent redelivery for identical commands. Expanded
+[green CI #40149161949](https://github.com/stoicsatvik/Xtension/actions/runs/40149161949):
+**7/7 new regressions**, **8/8 inherited regressions**, and syntax
+passed. Full evidence: `research/E230_command_replay_identity.md`.
+
+**Unresolved:** legacy receipts require manual reconciliation; real
+service-worker crash between browser mutation and receipt persistence
+may duplicate side effects. E226 cross-context atomic storage-commit
+revocation remains expected-failing. Four npm advisories remain
+untriaged. No merge, deployment, live user data, or outreach.
