@@ -1,0 +1,24 @@
+name: E232 completed receipt retention
+on:
+  push:
+    branches:
+      - research/e232-receipt-eviction-fence-20261025
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  replay-retention:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts --no-package-lock
+      - name: E232 bounded replay retention
+        run: npx vitest run tests/mcp-bridge-receipt-retention.test.js
+      - name: Inherited E230 and E231 regressions
+        run: npx vitest run tests/mcp-bridge-command-crash-fence.test.js tests/mcp-bridge-replay-identity.test.js tests/mcp-command-cache.test.js
+      - name: Agent syntax
+        run: node --check agent/background-mcp-bridge.js
