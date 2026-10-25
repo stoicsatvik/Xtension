@@ -1,0 +1,24 @@
+name: E233 retirement acknowledgement falsification
+on:
+  push:
+    branches:
+      - research/e233-retirement-ack-falsification-20261025
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  retirement-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts --no-package-lock
+      - name: E233 protocol counterexamples (two explicitly expected failures)
+        run: npx vitest run tests/mcp-bridge-retirement-safety.test.js
+      - name: E232 receipt retention and E231 crash-intent controls
+        run: npx vitest run tests/mcp-bridge-receipt-retention.test.js tests/mcp-bridge-command-crash-fence.test.js
+      - name: Syntax checks
+        run: node --check mcp/src/state-store.mjs && node --check agent/mcp-command-cache.js
