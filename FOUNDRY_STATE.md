@@ -377,3 +377,28 @@ cross-context atomicity (E226 remains expected-failing). Completed receipts
 can still age out after 100 entries; manual storage deletion defeats
 the journal. Four npm advisories remain untriaged. No merge, deployment,
 live user data, or external outreach.
+
+
+## E232 completed receipt eviction safety — 2026-10-25
+
+Draft E232 stacked on E231 PR #24, unmerged. E231 protected pending
+intents, but its 100-entry bounded journal still evicted **completed**
+fingerprinted receipts. Once an old command ID was forgotten, redelivery
+could execute its browser mutation again. Test-only
+[red CI #40157231972](https://github.com/stoicsatvik/Xtension/actions/runs/40157231972)
+reproduced **2/3 failing contracts** (full-journal rejection and the
+101st command's unauthorized extra mutation); one pending-identity
+control passed.
+
+The correction refuses **new** command intents when all 100 journal
+slots are occupied, preserving prior completed replay receipts.
+[Green implementation CI #40157261989](https://github.com/stoicsatvik/Xtension/actions/runs/40157261989)
+passed **3/3 E232 regressions**, inherited E230/E231 tests, and agent
+syntax. Details: `research/E232_completed_receipt_eviction.md`.
+
+**Tradeoff:** no automatic receipt pruning; after 100 unique commands,
+new actions require explicit safe reconciliation. This is bounded
+fail-closed replay safety, not exactly-once semantics. External journal
+deletion, other-context writes, real MV3 process kills, and E226
+cross-context atomic revocation remain unresolved. Four npm advisories
+remain untriaged. No merge, deployment, live user data, or outreach.
