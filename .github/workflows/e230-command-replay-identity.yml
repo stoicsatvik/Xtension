@@ -1,0 +1,24 @@
+name: E230 command replay identity
+on:
+  push:
+    branches:
+      - research/e230-command-replay-identity-20261025
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  replay-identity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts --no-package-lock
+      - name: E230 replay identity regressions
+        run: npx vitest run tests/mcp-bridge-replay-identity.test.js
+      - name: Existing replay and consent regressions
+        run: npx vitest run tests/mcp-command-cache.test.js tests/mcp-bridge-consent.test.js tests/mcp-bridge-revoked-poll-command.test.js
+      - name: Agent syntax
+        run: node --check agent/background-mcp-bridge.js
