@@ -1,0 +1,24 @@
+name: E231 command crash-intent fence
+on:
+  push:
+    branches:
+      - research/e231-command-intent-crash-fence-20261025
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  crash-fence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts --no-package-lock
+      - name: E231 crash-window regressions
+        run: npx vitest run tests/mcp-bridge-command-crash-fence.test.js
+      - name: Inherited E230 replay identity regressions
+        run: npx vitest run tests/mcp-bridge-replay-identity.test.js tests/mcp-command-cache.test.js
+      - name: Agent syntax
+        run: node --check agent/background-mcp-bridge.js

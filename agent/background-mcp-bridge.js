@@ -6,6 +6,7 @@ import {
 import {
   inspectCommandReplay,
   MCP_COMMAND_RESULTS_KEY,
+  rememberCommandIntent,
   rememberCommandResult
 } from "./mcp-command-cache.js";
 
@@ -36,6 +37,7 @@ function withLocalMutation(task) {
 }
 
 class RevokedPairingError extends Error {}
+class DurableIntentError extends Error {}
 
 async function assertPairingCurrent(isAuthorized) {
   if (!(await isAuthorized())) throw new RevokedPairingError("MCP pairing was revoked before the browser action.");
@@ -190,6 +192,13 @@ async function readCachedCommandResult(commandId, fingerprint) {
   return inspectCommandReplay(stored[MCP_COMMAND_RESULTS_KEY], commandId, fingerprint);
 }
 
+// The intent is durably recorded before the first browser side effect.
+async function persistCommandIntent(commandId, fingerprint) {
+  const stored = await chrome.storage.local.get(MCP_COMMAND_RESULTS_KEY);
+  const next = rememberCommandIntent(stored[MCP_COMMAND_RESULTS_KEY], commandId, fingerprint);
+  await chrome.storage.local.set({ [MCP_COMMAND_RESULTS_KEY]: next });
+}
+
 async function persistCommandResult(commandId, result, fingerprint) {
   const stored = await chrome.storage.local.get(MCP_COMMAND_RESULTS_KEY);
   const next = rememberCommandResult(
@@ -250,6 +259,9 @@ async function executeCommandOnceLocked(command, isAuthorized, pairingToken) {
   const fingerprint = await commandReplayFingerprint(command, pairingToken);
   const cached = await readCachedCommandResult(command.id, fingerprint);
   if (cached.state === "replay") return cached.result;
+  if (cached.state === "pending") {
+    return { ok: false, error: "Command outcome uncertain after interrupted execution; pending intent requires manual reconciliation." };
+  }
   // Legacy receipts cannot prove which payload or pairing produced them.
   // Re-executing might duplicate a destructive operation; replaying might
   // falsely acknowledge a different command. Require a fresh command ID.
@@ -274,21 +286,32 @@ async function executeCommandOnceLocked(command, isAuthorized, pairingToken) {
     }
     // Approval checks and reads can suspend execution while pairing changes.
     await assertPairingCurrent(isAuthorized);
+    // A crash after the browser action but before receipt persistence used to
+    // repeat the action on redelivery. A pending intent fences that window:
+    // after restart, uncertain commands require reconciliation, not re-run.
+    try {
+      await persistCommandIntent(command.id, fingerprint);
+    } catch (error) {
+      throw new DurableIntentError(`durable-intent write failed; action not started: ${error instanceof Error ? error.message : String(error)}`);
+    }
     const value = await executeCommand(command, isAuthorized);
     result = { ok: true, value };
   } catch (error) {
     // A revoked command was never executed. Do not cache a failure receipt
     // under its ID, which could poison a future valid pairing.
     if (error instanceof RevokedPairingError) return null;
+    // A failed intent write is a hard stop. Never attempt a browser mutation
+    // or replace an uncertain partial write with a completion receipt.
+    if (error instanceof DurableIntentError) throw error;
     result = {
       ok: false,
       error: error instanceof Error ? error.message : String(error)
     };
   }
 
-  // Persist before acknowledging the MCP process. If Chrome or the bridge dies
-  // after the browser action but before the POST succeeds, redelivery replays
-  // this result instead of repeating the browser action.
+  // Persist before acknowledging the MCP process. A successful completion
+  // replaces the pending intent. If this write fails, the pending intent
+  // survives and redelivery must stop for manual reconciliation.
   await persistCommandResult(command.id, result, fingerprint);
   return result;
 }
