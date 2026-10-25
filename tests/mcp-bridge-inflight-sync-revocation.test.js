@@ -13,7 +13,7 @@ async function until(predicate) {
   }
 }
 
-function harness() {
+function harness({ ignoreAbort = false } = {}) {
   const stored = {};
   const messages = [], changes = [], requests = [];
 
@@ -48,14 +48,14 @@ function harness() {
       const request = {
         token, signal: options.signal, aborted: false,
         release() {
-          if (!this.aborted) resolve({ ok: true, json: async () => ({ status: {} }) });
+          if (!this.aborted || ignoreAbort) resolve({ ok: true, json: async () => ({ status: {} }) });
         }
       };
       options.signal?.addEventListener("abort", () => {
         request.aborted = true;
         const error = new Error("Request aborted");
         error.name = "AbortError";
-        reject(error);
+        if (!ignoreAbort) reject(error);
       }, { once: true });
       requests.push(request);
     });
@@ -142,4 +142,17 @@ it("metadata-only storage updates do not abort a valid in-flight sync", async ()
   expect(h.requests[0].aborted).toBe(false);
   h.requests[0].release();
   expect((await active).connected).toBe(true);
+});
+
+it("does not claim stale success when an HTTP transport ignores abort", async () => {
+  vi.resetModules();
+  const h = harness({ ignoreAbort: true });
+  await import("../agent/background-mcp-bridge.js");
+  const old = h.send("mcp:configure", { token: TOKEN_A });
+  await until(() => h.requests.length === 1);
+  expect((await h.send("mcp:configure", { token: TOKEN_B })).connected).toBe(true);
+  expect(h.requests[0].aborted).toBe(true);
+  h.requests[0].release();
+  expect((await old).connected).toBe(false);
+  expect(h.stored[CONFIG].token).toBe(TOKEN_B);
 });
