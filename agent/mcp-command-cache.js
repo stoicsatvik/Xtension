@@ -48,9 +48,24 @@ export function rememberCommandIntent(
     throw new Error("Cannot journal a command without a replay fingerprint.");
   }
   const existing = Array.isArray(records) ? records : [];
+  // A bounded receipt cache cannot silently discard a completed command:
+  // redelivery of that evicted ID would perform its browser mutation again.
+  // New actions therefore stop when every journal slot is occupied, whether
+  // the records are pending or completed. Explicit reconciliation is required.
+  const previous = existing.find((record) => record?.id === commandId);
+  if (previous) {
+    if (previous.fingerprint !== fingerprint) {
+      throw new Error("MCP command identity collision; reconcile before execution.");
+    }
+    if (previous.phase === "pending") return existing;
+    throw new Error("MCP command already completed; replay its receipt.");
+  }
+  if (existing.length >= Math.max(1, limit)) {
+    throw new Error("MCP command journal is full; reconcile retained receipts before new actions.");
+  }
   const next = [
     { id: commandId, fingerprint, phase: "pending", startedAt },
-    ...existing.filter((record) => record?.id !== commandId)
+    ...existing
   ];
   return retainPending(next, limit);
 }
