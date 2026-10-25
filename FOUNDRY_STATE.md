@@ -302,3 +302,29 @@ See `research/E228_stale_pairing_snapshot_sync.md`.
 cross-context atomic revocation, MV3 restart behavior, and the known
 E226 expected-failing in-flight storage commit assertion. No merge,
 deployment, live browser data, or external outreach.
+
+
+## E229 in-flight evidence sync cancellation — 2026-10-25
+
+Draft PR #22 stacked on E228 PR #21, unmerged. Three controlled
+HTTP-pending experiments demonstrated that local pairing rotation,
+local disconnect, and an external Chrome storage pairing-change event
+did not abort an obsolete evidence sync. The metadata-only control
+passed. [Red CI #40145236601](https://github.com/stoicsatvik/Xtension/actions/runs/40145236601):
+**3 failures / 1 passing control**.
+
+The correction tracks in-flight sync requests with `AbortController`,
+cancels obsolete requests on pairing transitions, and revalidates
+the pairing before reporting a completed request as connected.
+An additional test confirms that even an abort-ignoring transport
+cannot report stale success.
+[Green implementation CI #40145512755](https://github.com/stoicsatvik/Xtension/actions/runs/40145512755):
+**5/5 new tests**, **12/12 inherited tests**, syntax, and **15/15**
+exact implementation-head workflows succeeded. Full evidence and
+limitations: `research/E229_inflight_sync_revocation.md`.
+
+**Not established:** recall of already-delivered HTTP evidence, atomic
+cross-context revocation or storage commits, real MV3 lifecycle behavior.
+E226's expected-failing atomic storage-commit assertion remains.
+Dependency installation also reported four untriaged npm advisories.
+No merge, deployment, live user evidence, or external outreach.
