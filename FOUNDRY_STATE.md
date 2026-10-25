@@ -450,3 +450,10 @@ filesystem durability, HTTP transport, Chromium MV3 termination, or a
 production server implementation. E226 cross-context revocation remains
 unresolved; four npm advisories are untriaged. No merge, deployment,
 live data, or external outreach.
+
+
+## E264 browser-action crash recovery indistinguishability — 2026-10-25
+
+Draft research branch `research/e264-crash-reconciliation-20261025` stacks on E234. Two crash cuts (before effect and after effect/before receipt) leave exactly the same durable browser pending-intent and server lease state but differ in committed non-idempotent effect count (0 vs 1). Retrying yields [1,2] effects; skipping or halting yields [0,1]. The idealized effect-boundary atomic dedup control yields [1,1]. Seven deterministic Node tests preserve both negative cases and the control; local Node 22 tests passed 7/7. See `research/E264_CRASH_RECONCILIATION_INDETERMINACY_20261025.md` and the E264 exact-head workflow.
+
+**Claim:** exactly-once automatic recovery without effect-boundary idempotency/atomicity REJECTED in the stated protocol model. Browser lifecycle, Chrome action semantics and production durability NOT YET PROVEN. **Next:** classify real browser actions by idempotency and test disposable-Chrome revision/precondition fences; retain fail-closed pending receipts, do not auto-retry uncertain non-idempotent actions. No production pruning, merge, deployment or user-browser changes.

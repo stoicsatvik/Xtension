@@ -1,0 +1,21 @@
+name: E264 crash reconciliation indistinguishability
+on:
+  push:
+    branches:
+      - research/e264-crash-reconciliation-20261025
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  crash-reconciliation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: E264 negative crash-window and idealized atomic-dedup control
+        run: node --test tests/e264-crash-reconciliation.test.mjs
+      - name: Syntax checks
+        run: node --check research/e264_crash_reconciliation_model.mjs && node --check tests/e264-crash-reconciliation.test.mjs
