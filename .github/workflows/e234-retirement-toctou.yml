@@ -1,0 +1,21 @@
+name: E234 durable retirement TOCTOU model
+on:
+  push:
+    branches:
+      - research/e234-durable-retirement-toctou-20261025
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  retirement-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: E234 isolated epoch/tombstone crash and TOCTOU counterexamples
+        run: node --test tests/e234-durable-retirement-model.test.mjs
+      - name: Syntax checks
+        run: node --check research/e234_retirement_epoch_model.mjs && node --check tests/e234-durable-retirement-model.test.mjs

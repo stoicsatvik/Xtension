@@ -429,3 +429,24 @@ E232 still fails closed at 100 identities. A durable retirement ledger,
 in-flight lease fencing, real MV3 tests, and E226 cross-context atomic
 revocation remain unresolved. Four npm advisories are untriaged. No merge,
 deployment, live data access, or external outreach.
+
+## E234 durable retirement and preflight TOCTOU falsification — 2026-10-25
+
+Draft PR #27 stacked on E233 PR #26. An isolated optimistic durable
+tombstone and lease-epoch model tests the proposed path toward pruning the
+E232 browser replay journal. Four positive controls cover stale lease
+acknowledgement rejection, ideal tombstone survival across restart,
+pending-intent crash reconciliation using the actual browser cache helper,
+and rejection of preflight checks after retirement. Two **negative**
+counterexamples show that (a) an already-issued stale lease can still be
+executed after the browser deletes its receipt, and (b) a successful
+online preflight can race with retirement before an asynchronous browser
+write commits. See `research/E234_DURABLE_RETIREMENT_TOCTOU_20261025.md`.
+
+**Decision:** do not enable automatic receipt pruning. Idealized durable
+server records and lease epochs alone are insufficient for end-to-end
+atomic browser mutation. This is a deterministic model, not actual
+filesystem durability, HTTP transport, Chromium MV3 termination, or a
+production server implementation. E226 cross-context revocation remains
+unresolved; four npm advisories are untriaged. No merge, deployment,
+live data, or external outreach.
