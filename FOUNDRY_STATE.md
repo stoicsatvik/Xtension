@@ -407,3 +407,25 @@ fail-closed replay safety, not exactly-once semantics. External journal
 deletion, other-context writes, real MV3 process kills, and E226
 cross-context atomic revocation remain unresolved. Four npm advisories
 remain untriaged. No merge, deployment, live user data, or outreach.
+
+## E233 acknowledgement-only receipt retirement falsification — 2026-10-25
+
+Draft PR #26 is stacked on E232 PR #25, unmerged. The local MCP server's
+`completeCommand` acknowledgement is **not** a safe certificate to delete a
+browser receipt: an already-issued second lease for the same command ID can
+still arrive, and server completion tombstones are in-memory only, lost when
+the store is recreated. The real `createBridgeStore` and browser replay-cache
+helpers reproduce both counterexamples without live user data.
+
+[Exact-head test CI #40160791723](https://github.com/stoicsatvik/Xtension/actions/runs/40160791723)
+passed **4/4 E233 tests**, including **two explicitly expected-failing
+safety properties** (not corrections); inherited E231/E232 controls **7/7**
+and syntax checks passed. **20/20 exact-head workflows succeeded** on test
+commit `9ac1f56f9120f8093c8e93cb01d8fa5b54c59671`.
+See `research/E233_retirement_ack_falsification.md`.
+
+**No production pruning or server retirement protocol implemented.**
+E232 still fails closed at 100 identities. A durable retirement ledger,
+in-flight lease fencing, real MV3 tests, and E226 cross-context atomic
+revocation remain unresolved. Four npm advisories are untriaged. No merge,
+deployment, live data access, or external outreach.

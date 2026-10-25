@@ -33,3 +33,14 @@ Do not implement automatic receipt deletion on the basis of the current `{ok:tru
 Only deterministic in-process JavaScript model tests are exercised. No real network delays, Chromium MV3 termination, server power loss, durable tombstone implementation, or exactly-once guarantee is established. E226 cross-context storage-commit race remains unresolved.
 
 Next: prototype a **disposable** server-retirement ledger with durable tombstones and a drain/fencing epoch. Inject crashes at every acknowledgement/retirement/prune boundary and verify that stale leased deliveries cannot execute after a receipt is deleted. Keep production pruning disabled until that property is established.
+
+## Verified deterministic execution
+
+[Exact-head E233 workflow #40160791723](https://github.com/stoicsatvik/Xtension/actions/runs/40160791723)
+completed successfully on `9ac1f56f9120f8093c8e93cb01d8fa5b54c59671`:
+**4/4 E233 tests** (2 direct counterexample/control tests and **2 expected-failing
+unmet invariants**), **7/7 inherited E231/E232 controls**, and both syntax
+checks passed. **20/20 workflows at that head completed successfully**.
+Vitest reports expected-failing tests as passing by design; these do not
+establish retirement safety. npm installation again reported four dependency
+advisories (one moderate, three critical), not triaged here.
