@@ -16,9 +16,11 @@ Test-only commit `6f290384c8dd56a39133744672800b3085803ca6` ran [red CI #4015723
 
 The red failures were behavioral assertions, not dependency installation errors.
 
+A second test-only commit `26ff6afc9b62a1e6dd515808967154fa557fa0f5` exposed an **additional bypass**. A locally denied destructive command produces a failure receipt *before* the intent write; even after blocking new intents at capacity, the failure-receipt path could still evict the oldest successful command. [Second red CI #40157369904](https://github.com/stoicsatvik/Xtension/actions/runs/40157369904) failed **1/4 tests** exactly on this assertion (3 controls passed). This was a genuine regression, not a runner failure.
+
 ## Correction
 
-`agent/mcp-command-cache.js` now checks journal capacity **before** creating a fresh intent. It refuses new command identities when all 100 slots are occupied, including slots containing completed receipts. Existing pending identities remain fenced; completed identities must be replayed from their retained receipts and cannot be re-journaled as new actions. Identity collisions fail closed. This retains the legacy result-cache helper's historical bounded behavior, but the production bridge's intent-first path no longer silently evicts previously completed replay evidence.
+`agent/mcp-command-cache.js` now checks journal capacity **before** creating a fresh intent. It refuses new command identities when all 100 slots are occupied, including slots containing completed receipts. Existing pending identities remain fenced; completed identities must be replayed from their retained receipts and cannot be re-journaled as new actions. Identity collisions fail closed. The completion-receipt helper also rejects a **new fingerprinted receipt** at capacity when no matching command identity already exists. This closes the denied/expired-approval path that can fail before intent persistence. Matching pending intents may still be finalized; identity collisions are rejected. The legacy unscoped helper's historical bounded behavior is preserved for compatibility, but the production bridge's fingerprinted paths cannot silently evict earlier completed replay evidence.
 
 ## Tradeoff and limitations
 
@@ -31,7 +33,7 @@ The red failures were behavioral assertions, not dependency installation errors.
 
 ## Validation
 
-[Green implementation CI #40157261989](https://github.com/stoicsatvik/Xtension/actions/runs/40157261989) passed all **3/3 E232 tests**, the inherited E230/E231 regressions, and agent syntax on implementation commit `0ee782b98c2ff9a3efe8591a33c0e13e7c5eafe9`.
+[First green CI #40157261989](https://github.com/stoicsatvik/Xtension/actions/runs/40157261989) passed **3/3 E232 tests** on the initial intent-only correction. The second correction passed [final implementation CI #40157458572](https://github.com/stoicsatvik/Xtension/actions/runs/40157458572): **4/4 E232 tests**, inherited E230/E231 suites, and agent syntax on commit `96bcaebac0c42ae445196bdc164aceb83d1a942c`. The inherited E231 cache test was updated to assert retention of both pending and completed evidence rather than silently expecting completed-receipt eviction.
 
 The implementation is checked by `tests/mcp-bridge-receipt-retention.test.js`, which exercises the bounded helper, 100 real bridge command calls under mocked Chrome storage, and pending-intent retention. Inherited E230/E231 regression suites and agent syntax are run by `.github/workflows/e232-receipt-retention.yml`.
 

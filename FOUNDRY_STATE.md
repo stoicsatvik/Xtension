@@ -390,10 +390,15 @@ reproduced **2/3 failing contracts** (full-journal rejection and the
 101st command's unauthorized extra mutation); one pending-identity
 control passed.
 
-The correction refuses **new** command intents when all 100 journal
-slots are occupied, preserving prior completed replay receipts.
-[Green implementation CI #40157261989](https://github.com/stoicsatvik/Xtension/actions/runs/40157261989)
-passed **3/3 E232 regressions**, inherited E230/E231 tests, and agent
+The initial correction refuses **new** command intents when all 100
+journal slots are occupied, preserving completed replay receipts.
+A second [red CI #40157369904](https://github.com/stoicsatvik/Xtension/actions/runs/40157369904)
+exposed a bypass: denied actions produced unjournaled failure receipts
+that could still evict completed evidence (**1/4 E232 tests failed**).
+The completion-receipt path now rejects new fingerprinted receipts at
+capacity, and the inherited cache test reflects the stronger invariant.
+[Final implementation CI #40157458572](https://github.com/stoicsatvik/Xtension/actions/runs/40157458572)
+passed **4/4 E232 regressions**, inherited E230/E231 tests, and agent
 syntax. Details: `research/E232_completed_receipt_eviction.md`.
 
 **Tradeoff:** no automatic receipt pruning; after 100 unique commands,
