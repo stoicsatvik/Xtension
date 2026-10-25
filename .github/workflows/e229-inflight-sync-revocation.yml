@@ -1,0 +1,24 @@
+name: E229 in-flight evidence sync revocation
+on:
+  push:
+    branches:
+      - research/e229-inflight-sync-revocation-20261025
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  inflight-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts --no-package-lock
+      - name: E229 in-flight HTTP revocation regressions
+        run: npx vitest run tests/mcp-bridge-inflight-sync-revocation.test.js
+      - name: Inherited E223-E228 regressions
+        run: npx vitest run tests/mcp-bridge-stale-snapshot-sync.test.js tests/mcp-bridge-token-rotation-race.test.js tests/mcp-bridge-local-revocation-serialization.test.js tests/mcp-bridge-revocation-commit-races.test.js
+      - name: Agent syntax
+        run: node --check agent/background-mcp-bridge.js
