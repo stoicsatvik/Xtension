@@ -457,3 +457,29 @@ live data, or external outreach.
 Draft research branch `research/e264-crash-reconciliation-20261025` stacks on E234. Two crash cuts (before effect and after effect/before receipt) leave exactly the same durable browser pending-intent and server lease state but differ in committed non-idempotent effect count (0 vs 1). Retrying yields [1,2] effects; skipping or halting yields [0,1]. The idealized effect-boundary atomic dedup control yields [1,1]. Seven deterministic Node tests preserve both negative cases and the control; local Node 22 tests passed 7/7. See `research/E264_CRASH_RECONCILIATION_INDETERMINACY_20261025.md` and the E264 exact-head workflow.
 
 **Claim:** exactly-once automatic recovery without effect-boundary idempotency/atomicity REJECTED in the stated protocol model. Browser lifecycle, Chrome action semantics and production durability NOT YET PROVEN. **Next:** classify real browser actions by idempotency and test disposable-Chrome revision/precondition fences; retain fail-closed pending receipts, do not auto-retry uncertain non-idempotent actions. No production pruning, merge, deployment or user-browser changes.
+
+## E304 nested page-URL alias privacy fence — 2026-10-26
+
+Draft PR #30 stacks on E283 PR #29. The previous approved-storage-key
+validator did not reject generic nested `pageUrl`, `href` with
+`visitTime`, or unqualified `url` evidence. E304 adds conservative
+fail-closed aliases and recognized visit metadata, while preserving
+explicit extension metadata URLs and ordinary trial transition labels.
+
+Both local JSON evidence export and local MCP snapshot creation now use
+a structured-cloned, validated evidence snapshot. Synthetic fake URLs
+only; no real browser history accessed. Focused Actions
+[40350986213](https://github.com/stoicsatvik/Xtension/actions/runs/40350986213)
+passed **11/11** tests (two files) and syntax checks at commit
+`ebc8823e0e92fb3315c3860d61716718dd4fec0c`; all 22 workflows
+on that commit passed. Verify final exact-head CI separately.
+
+**SUPPORTED in tested software:** synthetic nested URL aliases rejected,
+metadata positive controls retained, accepted snapshots detached.
+**NOT YET PROVEN:** arbitrary free-text leakage prevention, complete
+schema-wide privacy, real Chrome MV3 worker suspension/concurrency, or
+retroactive removal of exported bytes. The generic URL policy may
+reject legitimate unclassified links by design.
+
+Next: disposable real-Chrome MV3 and two-client MCP export test with
+synthetic URL fixtures. No deployment, merge, or live browser action.
