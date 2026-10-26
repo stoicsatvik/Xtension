@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --exclude \"**/*.test.mjs\""
   },
   "dependencies": {
     "jszip": "^3.10.1",

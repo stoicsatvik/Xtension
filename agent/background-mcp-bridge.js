@@ -1,4 +1,4 @@
-import { LOCAL_EVIDENCE_KEYS } from "./export-policy.js";
+import { LOCAL_EVIDENCE_KEYS, assertNoRawBrowsingHistory } from "./export-policy.js";
 import {
   MCP_APPROVALS_KEY, approvalState, consumeMcpApproval, decideMcpApproval,
   pendingMcpApproval, requiresMcpApproval
@@ -54,7 +54,12 @@ async function buildSnapshot() {
   const entries = Object.entries(LOCAL_EVIDENCE_KEYS);
   const stored = await chrome.storage.local.get(entries.map(([, storageKey]) => storageKey));
   const snapshot = {};
-  for (const [field, storageKey] of entries) snapshot[field] = stored[storageKey] ?? null;
+  for (const [field, storageKey] of entries) {
+    const value = stored[storageKey] ?? null;
+    // Validate before making the HTTP request, not only at the bridge disk boundary.
+    assertNoRawBrowsingHistory(value);
+    snapshot[field] = value;
+  }
   return snapshot;
 }
 

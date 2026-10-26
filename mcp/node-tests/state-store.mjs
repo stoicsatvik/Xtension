@@ -79,3 +79,45 @@ test("recently completed identical actions return the cached result", async () =
   assert.equal(store.commands.length, 0);
   assert.equal(store.completeCommand(command.id, { ok: true, verdict: "optional" }), true);
 });
+
+test("E283: top-level allowlist does not authorize nested browsing-history records", async () => {
+  let persisted = 0;
+  const store = createBridgeStore({
+    token: "test-token",
+    initialState: { lastSyncAt: 0, snapshot: {} },
+    persistSnapshot: async () => { persisted += 1; }
+  });
+  const variants = [
+    { inventory: { extensions: [{ id: "ext", historyUrls: ["https://private.example/secret"] }] } },
+    { timeline: [{ details: { browsing_history: [{ url: "https://private.example" }] } }] },
+    { auditSession: { innocuous: [{ url: "https://private.example", lastVisitTime: 123 }] } },
+    { preferences: { ext: { history: ["https://private.example"] } } },
+    { versionHistory: { ext: { deep: { recentPages: ["https://private.example"] } } } }
+  ];
+  for (const payload of variants) {
+    await assert.rejects(store.updateSnapshot(payload), /history|visit/i);
+    assert.equal(persisted, 0, "rejected payload must never reach disk persistence");
+    assert.deepEqual(store.state.snapshot, {}, "rejected payload must not become visible");
+  }
+});
+
+test("E283: legitimate extension metadata and version history remain exportable", async () => {
+  let persisted = 0;
+  const store = createBridgeStore({
+    token: "test-token",
+    initialState: { lastSyncAt: 0, snapshot: {} },
+    persistSnapshot: async () => { persisted += 1; }
+  });
+  await store.updateSnapshot({
+    inventory: { extensions: [{
+      id: "ext", homepageUrl: "https://publisher.example",
+      hostPermissions: ["https://example.org/*"], permissions: ["history"]
+    }] },
+    versionHistory: { ext: [{ observedAt: 123, version: "1.2.3" }] },
+    rawHistory: ["https://not-exported.example"]
+  });
+  assert.equal(persisted, 1);
+  assert.equal(store.state.snapshot.inventory.extensions[0].homepageUrl, "https://publisher.example");
+  assert.equal(store.state.snapshot.versionHistory.ext[0].version, "1.2.3");
+  assert.equal("rawHistory" in store.state.snapshot, false);
+});

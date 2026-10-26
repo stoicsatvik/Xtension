@@ -28,3 +28,28 @@ describe("local evidence export", () => {
     expect(Object.keys(payload)).not.toContain("xtension.raw-history.never");
   });
 });
+
+describe("E283: nested browsing-history export boundary", () => {
+  it("rejects raw visits hidden under approved evidence keys", () => {
+    const payloads = [
+      { [LOCAL_EVIDENCE_KEYS.inventory]: { extensions: [{ id: "ext", historyUrls: ["https://private.example"] }] } },
+      { [LOCAL_EVIDENCE_KEYS.timeline]: [{ nested: { visits: [{ url: "https://private.example", visitCount: 2 }] } }] },
+      { [LOCAL_EVIDENCE_KEYS.auditSession]: { recentPages: ["https://private.example"] } }
+    ];
+    for (const payload of payloads) {
+      expect(() => buildLocalEvidenceExport(payload)).toThrow(/history|visit/i);
+    }
+  });
+
+  it("preserves declared host permissions and version history without raw visits", () => {
+    const payload = buildLocalEvidenceExport({
+      [LOCAL_EVIDENCE_KEYS.inventory]: { extensions: [{
+        id: "ext", homepageUrl: "https://publisher.example",
+        permissions: ["history"], hostPermissions: ["https://example.org/*"]
+      }] },
+      [LOCAL_EVIDENCE_KEYS.versionHistory]: { ext: [{ observedAt: 1, version: "2" }] }
+    });
+    expect(payload.inventory.extensions[0].homepageUrl).toBe("https://publisher.example");
+    expect(payload.versionHistory.ext[0].version).toBe("2");
+  });
+});

@@ -44,13 +44,49 @@ async function readBody(req) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
+// The top-level allowlist is not sufficient: arbitrary nested data can carry
+// browser-history records under an otherwise approved evidence field.
+// Reject recognizable history payloads before disk persistence. This is a
+// defense-in-depth shape check, not proof that arbitrary strings are private.
+const BROWSING_HISTORY_KEYS = new Set([
+  "history", "rawhistory", "rawbrowsinghistory", "browsinghistory",
+  "browserhistory", "historyurls", "visitedurls", "visitedpages",
+  "recentpages", "recentvisits", "historyentries", "historyitems",
+  "recentlyvisitedurls", "visitedsites", "historyvisits"
+]);
+const HISTORY_ITEM_KEYS = new Set([
+  "lastvisittime", "visitcount", "typedcount", "referringvisitid", "transition"
+]);
+const normalizedKey = (key) => key.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+function rejectNestedBrowsingHistory(value, depth = 0) {
+  if (depth > 32) throw new Error("Evidence nesting exceeds the privacy validation limit.");
+  if (!value || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    for (const item of value) rejectNestedBrowsingHistory(item, depth + 1);
+    return;
+  }
+  const keys = Object.keys(value);
+  if (keys.some((key) => BROWSING_HISTORY_KEYS.has(normalizedKey(key)))) {
+    throw new Error("Raw browsing-history field is not permitted in bridge evidence.");
+  }
+  // Chrome history records may be hidden under innocuous container names.
+  if (typeof value.url === "string" &&
+      keys.some((key) => HISTORY_ITEM_KEYS.has(normalizedKey(key)))) {
+    throw new Error("Browser visit record is not permitted in bridge evidence.");
+  }
+  for (const key of keys) rejectNestedBrowsingHistory(value[key], depth + 1);
+}
+
 function sanitizeSnapshot(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new Error("Snapshot must be a JSON object.");
   }
   const sanitized = {};
   for (const [key, value] of Object.entries(input)) {
-    if (SAFE_TOP_LEVEL_KEYS.has(key)) sanitized[key] = value;
+    if (!SAFE_TOP_LEVEL_KEYS.has(key)) continue;
+    rejectNestedBrowsingHistory(value);
+    sanitized[key] = value;
   }
   return sanitized;
 }
