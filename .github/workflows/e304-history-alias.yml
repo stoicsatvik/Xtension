@@ -9,6 +9,7 @@ on:
       - "tests/e304-history-alias-boundary.test.js"
       - ".github/workflows/e304-history-alias.yml"
       - "research/E304_NESTED_HISTORY_ALIAS_BOUNDARY_20261026.md"
+      - "FOUNDRY_STATE.md"
   workflow_dispatch:
 
 jobs:
