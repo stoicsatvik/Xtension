@@ -1,5 +1,7 @@
-// Keep raw Chrome browsing history local. Whitelisting storage keys alone
-// does not stop nested visit records from being embedded in approved evidence.
+// Keep raw Chrome browsing history local. An approved storage key is not
+// permission to export arbitrary nested URLs or browser visit metadata.
+// Ambiguous generic URLs fail closed; declared extension metadata URLs such
+// as homepageUrl and optionsUrl remain permitted.
 const HISTORY_FIELDS = new Set([
   "history", "rawhistory", "rawbrowsinghistory", "browsinghistory",
   "browserhistory", "historyurls", "visitedurls", "visitedpages",
@@ -7,7 +9,14 @@ const HISTORY_FIELDS = new Set([
   "recentlyvisitedurls", "visitedsites", "historyvisits"
 ]);
 const HISTORY_RECORD_FIELDS = new Set([
-  "lastvisittime", "visitcount", "typedcount", "referringvisitid", "transition"
+  "lastvisittime", "visitcount", "typedcount", "referringvisitid", "transition",
+  "visittime", "visitedat", "lastvisitedat", "firstvisittime", "visitid",
+  "lastvisited", "visitduration"
+]);
+const AMBIGUOUS_BROWSING_URL_FIELDS = new Set([
+  "url", "href", "pageurl", "pagehref", "taburl", "documenturl",
+  "locationhref", "referrerurl", "referrer", "referer", "visitedurl",
+  "currenturl", "lasturl"
 ]);
 const keyName = (key) => key.toLowerCase().replace(/[^a-z0-9]/g, "");
 
@@ -22,11 +31,21 @@ export function assertNoRawBrowsingHistory(value, depth = 0) {
   if (keys.some((key) => HISTORY_FIELDS.has(keyName(key)))) {
     throw new Error("Raw browsing-history field cannot leave the local agent.");
   }
-  if (typeof value.url === "string" &&
-      keys.some((key) => HISTORY_RECORD_FIELDS.has(keyName(key)))) {
-    throw new Error("Browser visit record cannot leave the local agent.");
+  if (keys.some((key) => HISTORY_RECORD_FIELDS.has(keyName(key)))) {
+    throw new Error("Browser visit metadata cannot leave the local agent.");
+  }
+  if (keys.some((key) => AMBIGUOUS_BROWSING_URL_FIELDS.has(keyName(key)))) {
+    throw new Error("Ambiguous page URL cannot leave the local agent.");
   }
   for (const key of keys) assertNoRawBrowsingHistory(value[key], depth + 1);
+}
+
+// Validate a detached snapshot, not an object that another local caller can
+// mutate between validation and JSON serialization / MCP export.
+export function snapshotLocalEvidence(value) {
+  const detached = structuredClone(value);
+  assertNoRawBrowsingHistory(detached);
+  return detached;
 }
 
 export const LOCAL_EVIDENCE_KEYS = Object.freeze({
@@ -52,9 +71,7 @@ export function buildLocalEvidenceExport(stored = {}, exportedAt = new Date().to
   };
 
   for (const [field, storageKey] of Object.entries(LOCAL_EVIDENCE_KEYS)) {
-    const value = stored[storageKey] ?? null;
-    assertNoRawBrowsingHistory(value);
-    payload[field] = value;
+    payload[field] = snapshotLocalEvidence(stored[storageKey] ?? null);
   }
 
   return payload;
