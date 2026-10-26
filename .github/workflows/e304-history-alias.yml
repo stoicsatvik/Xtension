@@ -1,0 +1,26 @@
+name: E304 nested history privacy fence
+
+on:
+  pull_request:
+    paths:
+      - "agent/export-policy.js"
+      - "agent/background-mcp-bridge.js"
+      - "tests/export-policy.test.js"
+      - "tests/e304-history-alias-boundary.test.js"
+      - ".github/workflows/e304-history-alias.yml"
+  workflow_dispatch:
+
+jobs:
+  focused-privacy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install
+      - run: npx vitest run tests/export-policy.test.js tests/e304-history-alias-boundary.test.js
+      - name: Validate Chrome worker import syntax
+        run: |
+          node --input-type=module --check < agent/export-policy.js
+          node --input-type=module --check < agent/background-mcp-bridge.js
