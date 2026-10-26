@@ -1,4 +1,4 @@
-import { LOCAL_EVIDENCE_KEYS, assertNoRawBrowsingHistory } from "./export-policy.js";
+import { LOCAL_EVIDENCE_KEYS, snapshotLocalEvidence } from "./export-policy.js";
 import {
   MCP_APPROVALS_KEY, approvalState, consumeMcpApproval, decideMcpApproval,
   pendingMcpApproval, requiresMcpApproval
@@ -56,9 +56,9 @@ async function buildSnapshot() {
   const snapshot = {};
   for (const [field, storageKey] of entries) {
     const value = stored[storageKey] ?? null;
-    // Validate before making the HTTP request, not only at the bridge disk boundary.
-    assertNoRawBrowsingHistory(value);
-    snapshot[field] = value;
+    // Validate and detach before making the HTTP request. Never export an
+    // object that can be mutated after the privacy check.
+    snapshot[field] = snapshotLocalEvidence(value);
   }
   return snapshot;
 }
