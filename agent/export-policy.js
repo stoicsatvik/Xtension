@@ -9,7 +9,7 @@ const HISTORY_FIELDS = new Set([
   "recentlyvisitedurls", "visitedsites", "historyvisits"
 ]);
 const HISTORY_RECORD_FIELDS = new Set([
-  "lastvisittime", "visitcount", "typedcount", "referringvisitid", "transition",
+  "lastvisittime", "visitcount", "typedcount", "referringvisitid",
   "visittime", "visitedat", "lastvisitedat", "firstvisittime", "visitid",
   "lastvisited", "visitduration"
 ]);
