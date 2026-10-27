@@ -1,0 +1,22 @@
+name: E337 scheme-wide host permission regression
+
+on:
+  pull_request:
+    paths:
+      - "agent/core.js"
+      - "tests/e337-scheme-wildcard-hosts.test.js"
+      - ".github/workflows/e337-scheme-hosts.yml"
+
+jobs:
+  scheme-wide-hosts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install
+      - name: Check agent syntax
+        run: node --input-type=module --check < agent/core.js
+      - name: Run E337 counterexamples and existing agent-core tests
+        run: npx vitest run tests/e337-scheme-wildcard-hosts.test.js tests/agent-core.test.js
