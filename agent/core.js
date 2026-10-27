@@ -29,7 +29,7 @@ export function hasBroadHostAccess(extension) {
   // https://*/* or http://*/* permission is broad even without *://*/*.
   return (extension.hostPermissions ?? []).some(
     (pattern) => pattern === "<all_urls>" ||
-      /^(?:https?|\\*):\\/\\/\\*\\/\\*$/i.test(pattern)
+      /^(?:https?|\*):\/\/\*\/\*$/i.test(pattern)
   );
 }
 
