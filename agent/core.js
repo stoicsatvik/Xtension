@@ -25,8 +25,11 @@ const CATEGORY_RULES = [
 ];
 
 export function hasBroadHostAccess(extension) {
+  // A wildcard host covers every site on its declared web scheme. A single
+  // https://*/* or http://*/* permission is broad even without *://*/*.
   return (extension.hostPermissions ?? []).some(
-    (pattern) => pattern === "<all_urls>" || pattern.includes("*://*/*")
+    (pattern) => pattern === "<all_urls>" ||
+      /^(?:https?|\*):\/\/\*\/\*$/i.test(pattern)
   );
 }
 
@@ -129,19 +132,21 @@ export function deriveWorkflowSignals(extensions, historyUrls) {
       continue;
     }
 
+    // Even a broad permission can be scheme-limited. Counting all recent
+    // pages would falsely claim http:// overlap for https://*/* access.
+    const matching = recentPages.filter((url) =>
+      hostPermissions.some((pattern) => hostPatternMatchesUrl(pattern, url))
+    );
+
     if (hasBroadHostAccess(extension)) {
       signals[extension.id] = {
         kind: "broad",
         totalRecentPages: recentPages.length,
-        matchedPages: recentPages.length,
-        matchedHosts: new Set(recentPages.map((url) => url.hostname)).size
+        matchedPages: matching.length,
+        matchedHosts: new Set(matching.map((url) => url.hostname)).size
       };
       continue;
     }
-
-    const matching = recentPages.filter((url) =>
-      hostPermissions.some((pattern) => hostPatternMatchesUrl(pattern, url))
-    );
 
     signals[extension.id] = {
       kind: matching.length > 0 ? "overlap" : "no-overlap",
