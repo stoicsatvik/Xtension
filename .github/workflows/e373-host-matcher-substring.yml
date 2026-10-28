@@ -1,0 +1,24 @@
+name: E373 host pattern substring falsification
+on:
+  push:
+    branches:
+      - foundry/e373-host-matcher-substring-20261029
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  matcher-falsification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install
+      - name: Focused malformed-pattern and inherited permission checks
+        run: npx vitest run tests/e373-host-matcher-substring.test.js tests/e337-scheme-wildcard-hosts.test.js tests/permission-catalog.test.js
+      - name: Full extension test suite
+        run: npm test
+      - name: Agent core syntax
+        run: node --input-type=module --check < agent/core.js
