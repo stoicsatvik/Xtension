@@ -95,7 +95,9 @@ export function parseWebUrl(value) {
 }
 
 export function hostPatternMatchesUrl(pattern, url) {
-  if (pattern === "<all_urls>" || pattern.includes("*://*/*")) return true;
+  // A substring such as "https://example.org/path/*://*/*" is not
+  // a global Chrome host permission. Parse the complete scheme/host below.
+  if (pattern === "<all_urls>") return true;
 
   const match = pattern.match(/^(\*|https?|http):\/\/([^/]+)\//i);
   if (!match) return false;
