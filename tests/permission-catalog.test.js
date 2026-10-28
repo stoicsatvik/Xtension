@@ -29,6 +29,34 @@ describe("host access summary", () => {
     expect(summarizeHostAccess([]).level).toBe("none");
   });
 
+  it("E352: treats scheme-wide wildcard hosts as broad consistently with core", () => {
+    for (const pattern of ["https://*/*", "http://*/*", "*://*/*", "<all_urls>"]) {
+      const summary = summarizeHostAccess([pattern]);
+      expect(summary.level).toBe("broad");
+      expect(summary.broadPatterns).toEqual([pattern]);
+      expect(summary.patternCount).toBe(1);
+    }
+  });
+
+  it("E352: keeps wildcard subdomains scoped and rejects substring false positives", () => {
+    for (const pattern of ["https://*.example.org/*", "http://*.example.org/*"]) {
+      const summary = summarizeHostAccess([pattern]);
+      expect(summary.level).toBe("multi-site");
+      expect(summary.broadPatterns).toEqual([]);
+    }
+    const malformed = summarizeHostAccess(["https://example.org/path/*://*/*"]);
+    expect(malformed.broadPatterns).toEqual([]);
+    expect(malformed.level).toBe("scoped");
+  });
+
+  it("E352: broad patterns dominate mixed scoped and file access", () => {
+    const summary = summarizeHostAccess(["file:///*", "https://*.example.org/*", "https://*/*"]);
+    expect(summary.level).toBe("broad");
+    expect(summary.broadPatterns).toEqual(["https://*/*"]);
+    expect(summary.wildcardDomains).toEqual(["https://*.example.org/*"]);
+    expect(summary.fileAccessDeclared).toBe(true);
+  });
+
   it("reports wildcard domains and file access conservatively", () => {
     const result = summarizeHostAccess(["https://*.example.com/*", "file:///*"]);
     expect(result.level).toBe("multi-site");

@@ -1,0 +1,25 @@
+name: E352 scheme-wide host catalog parity
+
+on:
+  push:
+    branches:
+      - foundry/e352-catalog-scheme-wide-hosts-20261028
+  workflow_dispatch:
+
+jobs:
+  catalog-and-core-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install
+      - name: Test catalog and core host permissions
+        run: npx vitest run tests/permission-catalog.test.js tests/e337-scheme-wildcard-hosts.test.js tests/agent-core.test.js
+      - name: Run inherited suite
+        run: npm test
+      - name: Syntax check
+        run: |
+          node --input-type=module --check < agent/core.js
+          node --input-type=module --check < agent/permission-catalog.js

@@ -145,7 +145,11 @@ export function describePermissions(permissions = []) {
 
 export function summarizeHostAccess(patterns = []) {
   const unique = [...new Set(patterns)];
-  const broadPatterns = unique.filter((pattern) => pattern === "<all_urls>" || pattern.includes("*://*/*"));
+  // Match complete Chrome scheme-wide host patterns, not arbitrary substrings.
+  // Keep this in parity with hasBroadHostAccess in agent/core.js.
+  const broadPatterns = unique.filter((pattern) =>
+    pattern === "<all_urls>" || /^(?:https?|\*):\/\/\*\/\*$/i.test(pattern)
+  );
   const filePatterns = unique.filter((pattern) => pattern.startsWith("file://"));
   const wildcardDomains = unique.filter((pattern) => /:\/\/\*\./.test(pattern));
 
