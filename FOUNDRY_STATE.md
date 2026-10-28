@@ -483,3 +483,14 @@ reject legitimate unclassified links by design.
 
 Next: disposable real-Chrome MV3 and two-client MCP export test with
 synthetic URL fixtures. No deployment, merge, or live browser action.
+
+
+## E373 — embedded all-sites substring creates fabricated host overlap (2026-10-29)
+
+**Falsification:** The workflow matcher treated any host-permission string containing `*://*/*` as unrestricted access, while the catalog and broad-host assessment required complete pattern matches. Three malformed/embedded patterns were rejected by the catalog but each matched unrelated HTTP(S) pages in the workflow matcher. In a frozen two-page fixture, `deriveWorkflowSignals` incorrectly reported **2 matched pages and 2 matched hosts**, where the supported host match was zero. This is fabricated *overlap evidence*, not evidence that Chrome actually granted these malformed permissions or that any extension executed.
+
+**Test-first receipt:** commit `56125467ff0e9bd9df32a207a958057ab64bf481`, [Actions #40773140113](https://github.com/stoicsatvik/Xtension/actions/runs/40773140113) FAILURE exactly at two new controls; 14 inherited/focused checks passed. The correction removes substring-based global matching and leaves complete scheme/host parsing intact. Implementation `240f9288a3a57f0132dac3fed6310214f86d0bff` passed [Actions #40773461390](https://github.com/stoicsatvik/Xtension/actions/runs/40773461390): **16/16 focused and 144/144 full tests**, plus syntax check.
+
+**Claim:** False-positive unrelated-site overlap from embedded wildcard substrings **REJECTED / CORRECTED IN TESTED SOFTWARE**. No real Chrome MV3 grant inventory, real browsing-history behavior, or external deployment was measured. Pattern-path behavior follows the repository's host-scope approximation and is not a complete Chrome match-pattern validator. No user browsing history was accessed.
+
+**Next:** Use a disposable unpacked Chrome extension and local-only synthetic browsing history to compare declared host patterns, browser-granted origins and observed overlap across wildcard schemes, subdomains and malformed/imported records. Never disable actual user extensions or upload history. Draft stacked on E352 #32; no main merge.
