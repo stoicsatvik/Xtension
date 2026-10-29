@@ -116,8 +116,11 @@ export function hostPatternMatchesUrl(pattern, url) {
 }
 
 export function deriveWorkflowSignals(extensions, historyUrls) {
+  // Normalize both URL objects and strings through the same HTTP(S)-only
+  // boundary. URL instances previously bypassed parseWebUrl and allowed
+  // file:/chrome:/data: pages to inflate synthetic workflow overlap.
   const recentPages = historyUrls
-    .map((value) => (value instanceof URL ? value : parseWebUrl(value)))
+    .map((value) => parseWebUrl(value))
     .filter(Boolean);
 
   const signals = {};
