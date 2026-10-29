@@ -494,3 +494,13 @@ synthetic URL fixtures. No deployment, merge, or live browser action.
 **Claim:** False-positive unrelated-site overlap from embedded wildcard substrings **REJECTED / CORRECTED IN TESTED SOFTWARE**. No real Chrome MV3 grant inventory, real browsing-history behavior, or external deployment was measured. Pattern-path behavior follows the repository's host-scope approximation and is not a complete Chrome match-pattern validator. No user browsing history was accessed.
 
 **Next:** Use a disposable unpacked Chrome extension and local-only synthetic browsing history to compare declared host patterns, browser-granted origins and observed overlap across wildcard schemes, subdomains and malformed/imported records. Never disable actual user extensions or upload history. Draft stacked on E352 #32; no main merge.
+
+## E395 URL-object protocol normalization — 2026-10-29
+
+**Expected-red reproduction:** `deriveWorkflowSignals` applied the HTTP(S)-only `parseWebUrl` filter to strings but passed already-constructed `URL` objects through unchanged. On a six-item synthetic fixture with two HTTP(S) URLs and four non-web URL objects (file/chrome/ftp/data), `<all_urls>` was incorrectly credited with **6/6 recent pages and five hosts** instead of **2/2 pages and two hosts**. The two all-nonweb objects also fabricated two recent pages. Exact-head test-first Actions [#40903066979](https://github.com/stoicsatvik/Xtension/actions/runs/40903066979) failed the three new E395 assertions while eight inherited focused tests passed.
+
+**Correction:** both strings and URL objects now pass through `parseWebUrl` before workflow overlap, preserving legitimate HTTP(S) cases and preventing non-web object bypass. Fix commit `af7a72b482d1cd850a3e6c5b86315556baa58730`; [exact-code Actions #40903228402](https://github.com/stoicsatvik/Xtension/actions/runs/40903228402) SUCCESS on focused controls, full extension suite and syntax.
+
+**Claim:** URL-instance protocol-bypass defect REPRODUCED and corrected HTTP(S) normalization SUPPORTED IN TESTED SOFTWARE. The test data are entirely synthetic. This is not evidence of actual Chrome browsing-history leakage, installed-extension behavior, or malicious extension activity. Chrome's optional file-scheme grants and real browser history semantics are not independently measured here. No browser data accessed, no user extension changed, no deployment or main merge.
+
+**Next:** disposable Chrome MV3 validation with authorized synthetic history and scheme grants; test the same boundary on all call sites, and keep capabilities distinct from actual execution. Avoid additional Actions runs unless justified by new evidence; account minutes are constrained.
