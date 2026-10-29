@@ -1,0 +1,24 @@
+name: E395 URL-instance protocol fence
+on:
+  push:
+    branches:
+      - research/e395-url-instance-protocol-fence-20261029
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  protocol-falsification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install
+      - name: URL-instance protocol and inherited host controls
+        run: npx vitest run tests/e395-url-instance-protocol-fence.test.js tests/e373-host-matcher-substring.test.js tests/e337-scheme-wildcard-hosts.test.js
+      - name: Full extension test suite
+        run: npm test
+      - name: Agent core syntax
+        run: node --input-type=module --check < agent/core.js
