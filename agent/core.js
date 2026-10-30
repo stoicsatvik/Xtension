@@ -30,7 +30,7 @@ export function hasBroadHostAccess(extension) {
   // Require a complete web-scheme wildcard host, not a wildcard substring.
   return (extension.hostPermissions ?? []).some(
     (pattern) => pattern === "<all_urls>" ||
-      /^(?:https?|\\*):\\/\\/\\*\\/.*$/i.test(pattern)
+      /^(?:https?|\*):\/\/\*\/.*$/i.test(pattern)
   );
 }
 
