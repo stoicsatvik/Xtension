@@ -1,0 +1,24 @@
+name: E414 wildcard-host path classification
+on:
+  push:
+    branches:
+      - research/e414-broad-host-path-fence-20261030
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  wildcard-host-path:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install
+      - name: Focused E414 and inherited agent-core regression
+        run: npx vitest run tests/e414-broad-host-path-fence.test.js tests/e395-url-instance-protocol-fence.test.js tests/e337-scheme-wildcard-hosts.test.js tests/agent-core.test.js
+      - name: Full test suite
+        run: npm test
+      - name: Agent core syntax
+        run: node --input-type=module --check < agent/core.js

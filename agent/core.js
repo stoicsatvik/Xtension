@@ -25,11 +25,12 @@ const CATEGORY_RULES = [
 ];
 
 export function hasBroadHostAccess(extension) {
-  // A wildcard host covers every site on its declared web scheme. A single
-  // https://*/* or http://*/* permission is broad even without *://*/*.
+  // Chromium ignores the path in manifest host_permissions. A declared
+  // https://*/private/* still covers every HTTPS host, not just /private/.
+  // Require a complete web-scheme wildcard host, not a wildcard substring.
   return (extension.hostPermissions ?? []).some(
     (pattern) => pattern === "<all_urls>" ||
-      /^(?:https?|\*):\/\/\*\/\*$/i.test(pattern)
+      /^(?:https?|\*):\/\/\*\/.*$/i.test(pattern)
   );
 }
 
