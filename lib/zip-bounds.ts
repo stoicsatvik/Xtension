@@ -3,6 +3,16 @@ import type JSZip from "jszip";
 /** Shared uncompressed-byte budget; never treat compressed ZIP size as a memory bound. */
 export type InflateBudget = { remainingBytes: number };
 
+/** CRC32 is an accidental-corruption check, not a signature or authenticity proof. */
+const CRC32_TABLE = new Uint32Array(256);
+for (let i = 0; i < CRC32_TABLE.length; i++) {
+  let value = i;
+  for (let bit = 0; bit < 8; bit++) {
+    value = (value & 1) ? (0xedb88320 ^ (value >>> 1)) : (value >>> 1);
+  }
+  CRC32_TABLE[i] = value >>> 0;
+}
+
 interface BoundedStream {
   pause(): void;
   resume(): void;
@@ -28,6 +38,11 @@ export function readBoundedZipText(
     const chunks: Uint8Array[] = [];
     let used = 0;
     let settled = false;
+    let crc = 0xffffffff;
+    // JSZip 3.10.x stores the central-directory CRC on loaded members.
+    // Do not use loadAsync({ checkCRC32: true }): it inflates every ZIP member
+    // before our per-member streaming bounds can apply.
+    const expectedCrc = (entry as JSZip.JSZipObject & { _data?: { crc32?: number } })._data?.crc32;
     const stream = (entry as JSZip.JSZipObject & { internalStream(type: string): BoundedStream }).internalStream("uint8array");
     const fail = (error: Error) => {
       if (settled) return;
@@ -41,6 +56,9 @@ export function readBoundedZipText(
         fail(new Error(`ZIP member exceeds uncompressed-byte limit: ${entry.name}`));
         return;
       }
+      for (const byte of chunk) {
+        crc = CRC32_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+      }
       used += chunk.byteLength;
       budget.remainingBytes -= chunk.byteLength;
       chunks.push(chunk);
@@ -49,6 +67,18 @@ export function readBoundedZipText(
     stream.on("end", () => {
       if (settled) return;
       settled = true;
+      // JSZip represents empty loaded members as an empty promise without
+      // central-directory CRC metadata. A zero-byte stream has CRC32 zero.
+      // Non-empty members must expose a verifiable checksum.
+      if (typeof expectedCrc !== "number" || !Number.isInteger(expectedCrc)) {
+        if (used !== 0) {
+          reject(new Error(`ZIP member has no verifiable CRC32: ${entry.name}`));
+          return;
+        }
+      } else if (((crc ^ 0xffffffff) >>> 0) !== (expectedCrc >>> 0)) {
+        reject(new Error(`ZIP member CRC32 mismatch: ${entry.name}`));
+        return;
+      }
       const bytes = new Uint8Array(used);
       let offset = 0;
       for (const chunk of chunks) {
