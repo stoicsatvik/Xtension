@@ -78,4 +78,39 @@ describe("E436 zero-length ZIP CRC metadata preflight", () => {
     bytes.writeUInt32LE(0xffffffff, eocdPosition(bytes) + 16);
     expect(() => validateEmptyZipCrc(bytes)).toThrow(/ZIP64/);
   });
+
+  it("E437 rejects duplicate central-directory filenames before JSZip collapses them", async () => {
+    const original = await fixture();
+    const eocd = eocdPosition(original);
+    const centralStart = original.readUInt32LE(eocd + 16);
+    const entryBytes = 46 + original.readUInt16LE(centralStart + 28) +
+      original.readUInt16LE(centralStart + 30) + original.readUInt16LE(centralStart + 32);
+    const duplicate = original.subarray(centralStart, centralStart + entryBytes);
+    const bytes = Buffer.concat([original.subarray(0, eocd), duplicate, original.subarray(eocd)]);
+    const newEocd = eocd + entryBytes;
+    bytes.writeUInt16LE(original.readUInt16LE(eocd + 10) + 1, newEocd + 8);
+    bytes.writeUInt16LE(original.readUInt16LE(eocd + 10) + 1, newEocd + 10);
+    bytes.writeUInt32LE(original.readUInt32LE(eocd + 12) + entryBytes, newEocd + 12);
+    expect(() => validateEmptyZipCrc(bytes)).toThrow(/Duplicate ZIP central-directory filename/);
+    await expect(analyzePackage(id, bytes)).rejects.toThrow(/Duplicate ZIP central-directory filename/);
+  });
+
+  it("E437 rejects a local-header filename conflicting with the central record", async () => {
+    const bytes = await fixture();
+    const namePos = bytes.indexOf(Buffer.from("manifest.json"));
+    expect(namePos).toBeGreaterThan(0);
+    bytes[namePos + "manifest.jso".length] = "x".charCodeAt(0);
+    expect(() => validateEmptyZipCrc(bytes)).toThrow(/local\/central filename mismatch/);
+    await expect(analyzePackage(id, bytes)).rejects.toThrow(/local\/central filename mismatch/);
+  });
+
+  it("E437 accepts a ZIP with data-descriptor local headers", async () => {
+    const zip = new JSZip();
+    zip.file("manifest.json", manifest);
+    zip.file("empty.js", "");
+    const bytes = Buffer.from(await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", streamFiles: true }));
+    expect(() => validateEmptyZipCrc(bytes)).not.toThrow();
+    const report = await analyzePackage(id, bytes);
+    expect(report.package.jsFilesScanned).toBe(1);
+  });
 });
