@@ -34,12 +34,40 @@ export function validateEmptyZipCrc(zipBytes: Uint8Array): void {
   }
   const end = centralStart + centralBytes;
   let pos = centralStart;
+  const names = new Set<string>();
+  const localOffsets = new Set<number>();
   for (let i = 0; i < count; i++) {
     if (pos + 46 > end || u32(pos) !== 0x02014b50) {
       throw new Error("Malformed ZIP central-directory entry");
     }
     const next = pos + 46 + u16(pos + 28) + u16(pos + 30) + u16(pos + 32);
     if (next > end) throw new Error("Truncated ZIP central-directory entry");
+    const nameStart = pos + 46;
+    const nameEnd = nameStart + u16(pos + 28);
+    // Byte-exact keys avoid text-decoder replacement collisions on malformed names.
+    const rawName = Array.from(zipBytes.subarray(nameStart, nameEnd), (b) =>
+      String.fromCharCode(b)).join("");
+    if (names.has(rawName)) throw new Error("Duplicate ZIP central-directory filename");
+    names.add(rawName);
+
+    const localStart = u32(pos + 42);
+    if (localOffsets.has(localStart)) throw new Error("Duplicate ZIP local-header offset");
+    localOffsets.add(localStart);
+    if (localStart > centralStart || centralStart - localStart < 30 ||
+        u32(localStart) !== 0x04034b50) {
+      throw new Error("ZIP local-header offset or signature mismatch");
+    }
+    const localNameStart = localStart + 30;
+    const localNameLength = u16(localStart + 26);
+    const localNameEnd = localNameStart + localNameLength;
+    if (localNameEnd > centralStart || localNameLength !== nameEnd - nameStart) {
+      throw new Error("ZIP local/central filename mismatch");
+    }
+    for (let j = 0; j < localNameLength; j++) {
+      if (zipBytes[localNameStart + j] !== zipBytes[nameStart + j]) {
+        throw new Error("ZIP local/central filename mismatch");
+      }
+    }
     if (u32(pos + 24) === 0 && u32(pos + 16) !== 0) {
       throw new Error("ZIP empty member CRC32 mismatch");
     }
