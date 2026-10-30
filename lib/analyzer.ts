@@ -1,5 +1,6 @@
 import JSZip from "jszip";
 import { readBoundedZipText } from "./zip-bounds";
+import { validateEmptyZipCrc } from "./zip-metadata";
 
 export type Severity = "low" | "medium" | "high";
 
@@ -269,6 +270,9 @@ export async function analyzePackage(id: string, crxBytes: Uint8Array): Promise<
   }
 
   const zipBytes = stripCrxHeader(crxBytes);
+  // JSZip loses the CRC of zero-length loaded entries; check their raw metadata
+  // before loading, without decompressing the archive.
+  validateEmptyZipCrc(zipBytes);
   const zip = await JSZip.loadAsync(zipBytes);
   const files = Object.values(zip.files).filter((entry) => !entry.dir);
   if (files.length > MAX_FILES) throw new Error(`Package contains more than ${MAX_FILES} files.`);
