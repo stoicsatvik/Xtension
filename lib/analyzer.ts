@@ -1,4 +1,5 @@
 import JSZip from "jszip";
+import { readBoundedZipText } from "./zip-bounds";
 
 export type Severity = "low" | "medium" | "high";
 
@@ -50,6 +51,7 @@ const EXTENSION_ID_RE = /^[a-p]{32}$/;
 const MAX_PACKAGE_BYTES = 25 * 1024 * 1024;
 const MAX_FILES = 2_000;
 const MAX_JS_FILE_CHARS = 1_000_000;
+const MAX_MANIFEST_BYTES = 256 * 1024;
 const MAX_TOTAL_SCANNED_CHARS = 6_000_000;
 
 export function extractExtensionId(input: string): string | null {
@@ -274,7 +276,7 @@ export async function analyzePackage(id: string, crxBytes: Uint8Array): Promise<
   const manifestFile = zip.file("manifest.json");
   if (!manifestFile) throw new Error("manifest.json was not found in the extension package.");
 
-  const manifestText = await manifestFile.async("text");
+  const manifestText = await readBoundedZipText(manifestFile, MAX_MANIFEST_BYTES, { remainingBytes: MAX_MANIFEST_BYTES });
   const manifest = JSON.parse(manifestText) as ExtensionManifest;
 
   const permissions = normalizeManifestStrings(manifest.permissions);
@@ -288,15 +290,11 @@ export async function analyzePackage(id: string, crxBytes: Uint8Array): Promise<
   const staticCounts = new Map<string, number>();
   const externalHosts = new Set<string>();
   let jsFilesScanned = 0;
-  let scannedChars = 0;
+  const jsBudget = { remainingBytes: MAX_TOTAL_SCANNED_CHARS };
 
   for (const entry of files) {
     if (!entry.name.endsWith(".js")) continue;
-    if (scannedChars >= MAX_TOTAL_SCANNED_CHARS) break;
-
-    const text = await entry.async("text");
-    const sample = text.slice(0, MAX_JS_FILE_CHARS);
-    scannedChars += sample.length;
+    const sample = await readBoundedZipText(entry, MAX_JS_FILE_CHARS, jsBudget);
     jsFilesScanned += 1;
 
     for (const rule of STATIC_RULES) {
