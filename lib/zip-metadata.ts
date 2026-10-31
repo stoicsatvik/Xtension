@@ -47,6 +47,14 @@ export function validateEmptyZipCrc(zipBytes: Uint8Array): void {
     // Byte-exact keys avoid text-decoder replacement collisions on malformed names.
     const rawName = Array.from(zipBytes.subarray(nameStart, nameEnd), (b) =>
       String.fromCharCode(b)).join("");
+    // JSZip normalizes ../ path segments when loading. Reject ambiguous names
+    // before that normalization can silently alias another central entry.
+    // ASCII separator checks operate on raw bytes, preserving Unicode names.
+    if (rawName.length === 0 || rawName.startsWith("/") ||
+        rawName.includes("\\") || rawName.includes("\0") ||
+        rawName.includes("//") || /(^|\/)\.{1,2}(\/|$)/.test(rawName)) {
+      throw new Error("Unsafe ZIP central-directory filename");
+    }
     if (names.has(rawName)) throw new Error("Duplicate ZIP central-directory filename");
     names.add(rawName);
 
