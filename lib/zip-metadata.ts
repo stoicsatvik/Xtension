@@ -132,6 +132,15 @@ export function validateEmptyZipCrc(zipBytes: Uint8Array): void {
         u16(localStart + 8) !== u16(pos + 10)) {
       throw new Error("ZIP local/central flags or compression method mismatch");
     }
+    // Without a streaming data descriptor (bit 3), local CRC32 and sizes
+    // must agree with the central record. JSZip may otherwise trust only
+    // the central metadata and conceal a contradictory local header.
+    if ((u16(pos + 8) & 0x0008) === 0 &&
+        (u32(localStart + 14) !== u32(pos + 16) ||
+         u32(localStart + 18) !== u32(pos + 20) ||
+         u32(localStart + 22) !== u32(pos + 24))) {
+      throw new Error("ZIP local/central CRC32 or sizes mismatch");
+    }
     // Neither a local extra field nor a declared compressed payload may
     // extend into the central directory. Use the central compressed size,
     // since data-descriptor ZIPs can leave local size fields as zero.
