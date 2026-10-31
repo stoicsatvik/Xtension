@@ -64,6 +64,8 @@ export function validateEmptyZipCrc(zipBytes: Uint8Array): void {
   }
   if (eocd < 0) throw new Error("ZIP end-of-central-directory record missing");
   const count = u16(eocd + 10);
+  // Fail before JSZip allocates thousands of member objects; directory entries count too.
+  if (count > 2_000) throw new Error("ZIP contains more than 2000 entries");
   const centralBytes = u32(eocd + 12);
   const centralStart = u32(eocd + 16);
   if (u16(eocd + 4) !== 0 || u16(eocd + 6) !== 0 ||
