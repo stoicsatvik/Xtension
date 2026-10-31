@@ -280,3 +280,59 @@ describe("E440 overlapping ZIP local member ranges", () => {
     expect(() => validateEmptyZipCrc(bytes)).not.toThrow();
   });
 });
+
+describe("E441 ZIP streaming data descriptor integrity", () => {
+  async function streamingFixture(): Promise<Buffer> {
+    const zip = new JSZip();
+    zip.file("manifest.json", manifest);
+    return Buffer.from(await zip.generateAsync({
+      type: "uint8array", compression: "DEFLATE", streamFiles: true,
+    }));
+  }
+
+  function descriptorOffsets(bytes: Buffer): { descriptor: number; eocd: number; central: number } {
+    const eocd = eocdPosition(bytes);
+    const central = bytes.readUInt32LE(eocd + 16);
+    const local = bytes.readUInt32LE(central + 42);
+    const descriptor = local + 30 + bytes.readUInt16LE(local + 26) +
+      bytes.readUInt16LE(local + 28) + bytes.readUInt32LE(central + 20);
+    return { descriptor, eocd, central };
+  }
+
+  it.each([["CRC32", 0], ["compressed size", 4], ["uncompressed size", 8]] as const)(
+    "rejects a data descriptor with mismatched %s", async (_label, offset) => {
+      const bytes = await streamingFixture();
+      const { descriptor } = descriptorOffsets(bytes);
+      expect(bytes.readUInt32LE(descriptor)).toBe(0x08074b50);
+      const field = descriptor + 4 + offset;
+      bytes.writeUInt32LE(bytes.readUInt32LE(field) ^ 1, field);
+      expect(() => validateEmptyZipCrc(bytes)).toThrow(/data descriptor CRC32 or sizes mismatch/);
+      await expect(analyzePackage(id, bytes)).rejects.toThrow(/data descriptor CRC32 or sizes mismatch/);
+    },
+  );
+
+  it("accepts a valid 12-byte unsigned data descriptor", async () => {
+    const original = await streamingFixture();
+    const { descriptor, eocd, central } = descriptorOffsets(original);
+    expect(original.readUInt32LE(descriptor)).toBe(0x08074b50);
+    const bytes = Buffer.concat([
+      original.subarray(0, descriptor),
+      original.subarray(descriptor + 4),
+    ]);
+    bytes.writeUInt32LE(central - 4, eocd - 4 + 16);
+    expect(() => validateEmptyZipCrc(bytes)).not.toThrow();
+    await expect(analyzePackage(id, bytes)).resolves.toBeDefined();
+  });
+
+  it("rejects a missing data descriptor even if local and central sizes agree", async () => {
+    const original = await streamingFixture();
+    const { descriptor, eocd, central } = descriptorOffsets(original);
+    expect(original.readUInt32LE(descriptor)).toBe(0x08074b50);
+    const bytes = Buffer.concat([
+      original.subarray(0, descriptor),
+      original.subarray(descriptor + 16),
+    ]);
+    bytes.writeUInt32LE(central - 16, eocd - 16 + 16);
+    expect(() => validateEmptyZipCrc(bytes)).toThrow(/data descriptor CRC32 or sizes mismatch/);
+  });
+});
