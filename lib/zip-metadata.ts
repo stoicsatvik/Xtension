@@ -36,6 +36,7 @@ export function validateEmptyZipCrc(zipBytes: Uint8Array): void {
   let pos = centralStart;
   const names = new Set<string>();
   const localOffsets = new Set<number>();
+  const memberRanges: Array<{ start: number; end: number }> = [];
   for (let i = 0; i < count; i++) {
     if (pos + 46 > end || u32(pos) !== 0x02014b50) {
       throw new Error("Malformed ZIP central-directory entry");
@@ -89,10 +90,19 @@ export function validateEmptyZipCrc(zipBytes: Uint8Array): void {
     if (dataStart > centralStart || u32(pos + 20) > centralStart - dataStart) {
       throw new Error("ZIP local member data exceeds central-directory boundary");
     }
+    // Each local header, name, extra field, and compressed payload must be
+    // disjoint from every other member. E439 checked only the central boundary.
+    memberRanges.push({ start: localStart, end: dataStart + u32(pos + 20) });
     if (u32(pos + 24) === 0 && u32(pos + 16) !== 0) {
       throw new Error("ZIP empty member CRC32 mismatch");
     }
     pos = next;
   }
   if (pos !== end) throw new Error("ZIP central-directory entry count mismatch");
+  memberRanges.sort((a, b) => a.start - b.start);
+  for (let i = 1; i < memberRanges.length; i++) {
+    if (memberRanges[i].start < memberRanges[i - 1].end) {
+      throw new Error("Overlapping ZIP local member ranges");
+    }
+  }
 }
