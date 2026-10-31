@@ -220,3 +220,63 @@ describe("E439 local/central ZIP metadata agreement", () => {
     expect(report.package.jsFilesScanned).toBe(1);
   });
 });
+
+
+describe("E440 overlapping ZIP local member ranges", () => {
+  function centralEntries(bytes: Buffer): { first: number; second: number } {
+    const eocd = eocdPosition(bytes);
+    const first = bytes.readUInt32LE(eocd + 16);
+    const second = first + 46 + bytes.readUInt16LE(first + 28) +
+      bytes.readUInt16LE(first + 30) + bytes.readUInt16LE(first + 32);
+    return { first, second };
+  }
+
+  it.each([false, true])(
+    "rejects a compressed payload overlapping the next local header (stream=%s)",
+    async (stream) => {
+      let bytes: Buffer;
+      if (stream) {
+        const zip = new JSZip();
+        zip.file("manifest.json", manifest);
+        zip.file("empty.js", "");
+        zip.file("background.js", "chrome.tabs.query({});");
+        bytes = Buffer.from(await zip.generateAsync({
+          type: "uint8array", compression: "DEFLATE", streamFiles: true,
+        }));
+      } else {
+        bytes = await fixture();
+      }
+      const { first, second } = centralEntries(bytes);
+      const firstLocal = bytes.readUInt32LE(first + 42);
+      const secondLocal = bytes.readUInt32LE(second + 42);
+      const dataStart = firstLocal + 30 + bytes.readUInt16LE(firstLocal + 26) +
+        bytes.readUInt16LE(firstLocal + 28);
+      expect(secondLocal).toBeGreaterThan(dataStart);
+      bytes.writeUInt32LE(secondLocal - dataStart + 2, first + 20);
+      expect(() => validateEmptyZipCrc(bytes)).toThrow(/Overlapping ZIP local member ranges/);
+      await expect(analyzePackage(id, bytes)).rejects.toThrow(/Overlapping ZIP local member ranges/);
+    },
+  );
+
+  it("rejects a local extra field that overlaps the next member header", async () => {
+    const bytes = await fixture();
+    const { first, second } = centralEntries(bytes);
+    const firstLocal = bytes.readUInt32LE(first + 42);
+    const secondLocal = bytes.readUInt32LE(second + 42);
+    const nameEnd = firstLocal + 30 + bytes.readUInt16LE(firstLocal + 26);
+    bytes.writeUInt16LE(secondLocal - nameEnd + 2, firstLocal + 28);
+    expect(() => validateEmptyZipCrc(bytes)).toThrow(/Overlapping ZIP local member ranges/);
+    await expect(analyzePackage(id, bytes)).rejects.toThrow(/Overlapping ZIP local member ranges/);
+  });
+
+  it("preserves an unmodified streaming archive with multiple members", async () => {
+    const zip = new JSZip();
+    zip.file("manifest.json", manifest);
+    zip.file("empty.js", "");
+    zip.file("background.js", "console.log(1)");
+    const bytes = Buffer.from(await zip.generateAsync({
+      type: "uint8array", compression: "DEFLATE", streamFiles: true,
+    }));
+    expect(() => validateEmptyZipCrc(bytes)).not.toThrow();
+  });
+});
