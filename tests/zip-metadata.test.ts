@@ -336,3 +336,77 @@ describe("E441 ZIP streaming data descriptor integrity", () => {
     expect(() => validateEmptyZipCrc(bytes)).toThrow(/data descriptor CRC32 or sizes mismatch/);
   });
 });
+
+describe("E442 ZIP Unicode Path alias resistance", () => {
+  async function unicodeFixture(): Promise<Buffer> {
+    const zip = new JSZip();
+    zip.file("é.js", "first");
+    zip.file("ø.js", "second");
+    return Buffer.from(await zip.generateAsync({ type: "nodebuffer" }));
+  }
+
+  function entries(bytes: Buffer): Array<{ central: number; local: number; extra: number }> {
+    const eocd = eocdPosition(bytes);
+    let pos = bytes.readUInt32LE(eocd + 16);
+    const result: Array<{ central: number; local: number; extra: number }> = [];
+    for (let i = 0; i < 2; i++) {
+      expect(bytes.readUInt32LE(pos)).toBe(0x02014b50);
+      const nameLength = bytes.readUInt16LE(pos + 28);
+      const extraLength = bytes.readUInt16LE(pos + 30);
+      const commentLength = bytes.readUInt16LE(pos + 32);
+      result.push({
+        central: pos,
+        local: bytes.readUInt32LE(pos + 42),
+        extra: pos + 46 + nameLength,
+      });
+      expect(extraLength).toBe(14);
+      pos += 46 + nameLength + extraLength + commentLength;
+    }
+    return result;
+  }
+
+  it("reproduces a real JSZip Unicode Path name collision and rejects it", async () => {
+    const bytes = await unicodeFixture();
+    const [first, second] = entries(bytes);
+    // Clear UTF-8 flags so JSZip uses valid Info-ZIP 0x7075 Unicode Path
+    // metadata. The CRC remains tied to each unchanged raw filename.
+    for (const entry of [first, second]) {
+      bytes.writeUInt16LE(0, entry.central + 8);
+      bytes.writeUInt16LE(0, entry.local + 6);
+    }
+    bytes.copy(bytes, second.extra + 9, first.extra + 9, first.extra + 14);
+    const loaded = await JSZip.loadAsync(bytes);
+    expect(Object.keys(loaded.files)).toEqual(["é.js"]);
+    await expect(loaded.file("é.js")!.async("text")).resolves.toBe("second");
+    expect(() => validateEmptyZipCrc(bytes)).toThrow(/Unsupported non-UTF-8 ZIP filename encoding/);
+  });
+
+  it("rejects a contradictory Unicode Path extra field even when UTF-8 is flagged", async () => {
+    const bytes = await unicodeFixture();
+    const [first, second] = entries(bytes);
+    bytes.copy(bytes, second.extra + 9, first.extra + 9, first.extra + 14);
+    expect(() => validateEmptyZipCrc(bytes)).toThrow(/Unicode Path extra field mismatch/);
+  });
+
+  it("rejects invalid UTF-8 raw filenames rather than allowing decoder aliases", async () => {
+    const bytes = await unicodeFixture();
+    const [first] = entries(bytes);
+    bytes[first.central + 46] = 0xff;
+    bytes[first.local + 30] = 0xff;
+    expect(() => validateEmptyZipCrc(bytes)).toThrow(/Invalid UTF-8 ZIP filename/);
+  });
+
+  it("rejects a truncated Unicode Path extra field", async () => {
+    const bytes = await unicodeFixture();
+    const [first] = entries(bytes);
+    bytes.writeUInt16LE(0xffff, first.extra + 2);
+    expect(() => validateEmptyZipCrc(bytes)).toThrow(/Malformed ZIP extra field/);
+  });
+
+  it("preserves ordinary JSZip Unicode filenames without collapsing entries", async () => {
+    const bytes = await unicodeFixture();
+    expect(() => validateEmptyZipCrc(bytes)).not.toThrow();
+    const loaded = await JSZip.loadAsync(bytes);
+    expect(Object.keys(loaded.files).sort()).toEqual(["é.js", "ø.js"].sort());
+  });
+});
