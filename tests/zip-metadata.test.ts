@@ -167,3 +167,56 @@ describe("E438 ambiguous ZIP pathname preflight", () => {
     expect(report.package.jsFilesScanned).toBe(2);
   });
 });
+
+describe("E439 local/central ZIP metadata agreement", () => {
+  function firstEntryOffsets(bytes: Buffer): { local: number; central: number } {
+    const eocd = eocdPosition(bytes);
+    const central = bytes.readUInt32LE(eocd + 16);
+    return { central, local: bytes.readUInt32LE(central + 42) };
+  }
+
+  it.each(["flags", "method"] as const)(
+    "rejects a conflicting local %s field before JSZip parsing", async (field) => {
+      const bytes = await fixture();
+      const { local } = firstEntryOffsets(bytes);
+      const offset = field === "flags" ? 6 : 8;
+      bytes.writeUInt16LE(bytes.readUInt16LE(local + offset) ^ 1, local + offset);
+      expect(() => validateEmptyZipCrc(bytes)).toThrow(/flags or compression method mismatch/);
+      await expect(analyzePackage(id, bytes)).rejects.toThrow(/flags or compression method mismatch/);
+    },
+  );
+
+  it("rejects a central compression method conflicting with the local header", async () => {
+    const bytes = await fixture();
+    const { central } = firstEntryOffsets(bytes);
+    bytes.writeUInt16LE(bytes.readUInt16LE(central + 10) ^ 1, central + 10);
+    expect(() => validateEmptyZipCrc(bytes)).toThrow(/flags or compression method mismatch/);
+  });
+
+  it("rejects a local extra field that extends into the central directory", async () => {
+    const bytes = await fixture();
+    const { local } = firstEntryOffsets(bytes);
+    bytes.writeUInt16LE(0xffff, local + 28);
+    expect(() => validateEmptyZipCrc(bytes)).toThrow(/local member data exceeds/);
+    await expect(analyzePackage(id, bytes)).rejects.toThrow(/local member data exceeds/);
+  });
+
+  it("rejects a central compressed size that extends into the central directory", async () => {
+    const bytes = await fixture();
+    const { central } = firstEntryOffsets(bytes);
+    bytes.writeUInt32LE(bytes.length, central + 20);
+    expect(() => validateEmptyZipCrc(bytes)).toThrow(/local member data exceeds/);
+  });
+
+  it("preserves valid streaming ZIP data descriptors", async () => {
+    const zip = new JSZip();
+    zip.file("manifest.json", manifest);
+    zip.file("background.js", "console.log(1)");
+    const bytes = Buffer.from(await zip.generateAsync({
+      type: "uint8array", compression: "DEFLATE", streamFiles: true,
+    }));
+    expect(() => validateEmptyZipCrc(bytes)).not.toThrow();
+    const report = await analyzePackage(id, bytes);
+    expect(report.package.jsFilesScanned).toBe(1);
+  });
+});
