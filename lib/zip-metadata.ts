@@ -10,6 +10,49 @@ export function validateEmptyZipCrc(zipBytes: Uint8Array): void {
   const view = new DataView(zipBytes.buffer, zipBytes.byteOffset, length);
   const u16 = (offset: number) => view.getUint16(offset, true);
   const u32 = (offset: number) => view.getUint32(offset, true);
+  // JSZip may replace a central filename with its Info-ZIP Unicode Path
+  // extra field (0x7075). A byte-exact name set alone misses that alias.
+  // Accept only canonical UTF-8 names and matching Unicode Path metadata.
+  const validatePathEncoding = (
+    nameStart: number, nameEnd: number, extraStart: number, extraEnd: number,
+    utf8Flag: boolean,
+  ) => {
+    const raw = zipBytes.subarray(nameStart, nameEnd);
+    if (raw.some((byte) => byte >= 0x80) && !utf8Flag) {
+      throw new Error("Unsupported non-UTF-8 ZIP filename encoding");
+    }
+    if (utf8Flag) {
+      try {
+        new TextDecoder("utf-8", { fatal: true }).decode(raw);
+      } catch {
+        throw new Error("Invalid UTF-8 ZIP filename");
+      }
+    }
+    let cursor = extraStart;
+    let unicodePathSeen = false;
+    while (cursor < extraEnd) {
+      if (extraEnd - cursor < 4) throw new Error("Malformed ZIP extra field");
+      const size = u16(cursor + 2);
+      const next = cursor + 4 + size;
+      if (next > extraEnd) throw new Error("Malformed ZIP extra field");
+      if (u16(cursor) === 0x7075) {
+        if (unicodePathSeen) throw new Error("Duplicate ZIP Unicode Path extra field");
+        unicodePathSeen = true;
+        // The 0x7075 payload is version(1), raw-name CRC32(4), UTF-8 name.
+        // Requiring identical name bytes makes both JSZip interpretations
+        // unambiguous, whether its CRC check accepts or ignores the override.
+        if (size !== 5 + raw.length || zipBytes[cursor + 4] !== 1) {
+          throw new Error("ZIP Unicode Path extra field mismatch");
+        }
+        for (let j = 0; j < raw.length; j++) {
+          if (zipBytes[cursor + 9 + j] !== raw[j]) {
+            throw new Error("ZIP Unicode Path extra field mismatch");
+          }
+        }
+      }
+      cursor = next;
+    }
+  };
   let eocd = -1;
   // ZIP comments are at most 65,535 bytes. Require the EOCD comment to end
   // at the archive boundary, so a signature inside payload is not trusted.
@@ -57,6 +100,10 @@ export function validateEmptyZipCrc(zipBytes: Uint8Array): void {
       throw new Error("Unsafe ZIP central-directory filename");
     }
     if (names.has(rawName)) throw new Error("Duplicate ZIP central-directory filename");
+    validatePathEncoding(
+      nameStart, nameEnd, nameEnd, nameEnd + u16(pos + 30),
+      (u16(pos + 8) & 0x0800) !== 0,
+    );
     names.add(rawName);
 
     const localStart = u32(pos + 42);
@@ -90,6 +137,10 @@ export function validateEmptyZipCrc(zipBytes: Uint8Array): void {
     if (dataStart > centralStart || u32(pos + 20) > centralStart - dataStart) {
       throw new Error("ZIP local member data exceeds central-directory boundary");
     }
+    validatePathEncoding(
+      localNameStart, localNameEnd, localNameEnd, dataStart,
+      (u16(localStart + 6) & 0x0800) !== 0,
+    );
     // Each local header, name, extra field, and compressed payload must be
     // disjoint from every other member. E439 checked only the central boundary.
     const dataEnd = dataStart + u32(pos + 20);
