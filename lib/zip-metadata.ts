@@ -76,6 +76,19 @@ export function validateEmptyZipCrc(zipBytes: Uint8Array): void {
         throw new Error("ZIP local/central filename mismatch");
       }
     }
+    // The local and central headers must agree on encoding and data layout.
+    // Data-descriptor archives still carry matching flags and method fields.
+    if (u16(localStart + 6) !== u16(pos + 8) ||
+        u16(localStart + 8) !== u16(pos + 10)) {
+      throw new Error("ZIP local/central flags or compression method mismatch");
+    }
+    // Neither a local extra field nor a declared compressed payload may
+    // extend into the central directory. Use the central compressed size,
+    // since data-descriptor ZIPs can leave local size fields as zero.
+    const dataStart = localNameEnd + u16(localStart + 28);
+    if (dataStart > centralStart || u32(pos + 20) > centralStart - dataStart) {
+      throw new Error("ZIP local member data exceeds central-directory boundary");
+    }
     if (u32(pos + 24) === 0 && u32(pos + 16) !== 0) {
       throw new Error("ZIP empty member CRC32 mismatch");
     }
