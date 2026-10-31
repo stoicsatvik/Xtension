@@ -114,3 +114,54 @@ describe("E436 zero-length ZIP CRC metadata preflight", () => {
     expect(report.package.jsFilesScanned).toBe(1);
   });
 });
+
+describe("E438 ambiguous ZIP pathname preflight", () => {
+  async function archiveWithName(name: string): Promise<Buffer> {
+    const zip = new JSZip();
+    zip.file("manifest.json", manifest);
+    zip.file(name, "fixture", { createFolders: false });
+    return Buffer.from(await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" }));
+  }
+
+  it("rejects a parent traversal that would alias manifest.json after JSZip sanitization", async () => {
+    const bytes = await archiveWithName("../manifest.json");
+    expect(() => validateEmptyZipCrc(bytes)).toThrow(/Unsafe ZIP central-directory filename/);
+    await expect(analyzePackage(id, bytes)).rejects.toThrow(/Unsafe ZIP central-directory filename/);
+  });
+
+  it.each(["src/../manifest.json", "./manifest.json", "src/./background.js"])(
+    "rejects relative path component %s", async (name) => {
+      expect(() => validateEmptyZipCrc(await archiveWithName(name))).toThrow(/Unsafe ZIP central-directory filename/);
+    },
+  );
+
+  it.each(["/absolute.js", "..\\manifest.json", "src//background.js"])(
+    "rejects noncanonical separator path %s", async (name) => {
+      expect(() => validateEmptyZipCrc(await archiveWithName(name))).toThrow(/Unsafe ZIP central-directory filename/);
+    },
+  );
+
+  it("rejects NUL bytes in raw ZIP filenames before text decoding", async () => {
+    const bytes = await archiveWithName("badname.js");
+    const name = Buffer.from("badname.js");
+    let matches = 0;
+    let pos = -1;
+    while ((pos = bytes.indexOf(name, pos + 1)) !== -1) {
+      bytes[pos + 3] = 0;
+      matches += 1;
+    }
+    expect(matches).toBe(2); // Local and central filenames.
+    expect(() => validateEmptyZipCrc(bytes)).toThrow(/Unsafe ZIP central-directory filename/);
+  });
+
+  it("preserves valid nested Unicode filenames and dotted basenames", async () => {
+    const zip = new JSZip();
+    zip.file("manifest.json", manifest);
+    zip.file("src/é/🛰️.js", "console.log(1)", { createFolders: false });
+    zip.file("src/v1..2.js", "", { createFolders: false });
+    const bytes = Buffer.from(await zip.generateAsync({ type: "uint8array" }));
+    expect(() => validateEmptyZipCrc(bytes)).not.toThrow();
+    const report = await analyzePackage(id, bytes);
+    expect(report.package.jsFilesScanned).toBe(2);
+  });
+});
