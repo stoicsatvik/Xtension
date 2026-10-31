@@ -204,7 +204,10 @@ describe("E439 local/central ZIP metadata agreement", () => {
   it("rejects a central compressed size that extends into the central directory", async () => {
     const bytes = await fixture();
     const { central } = firstEntryOffsets(bytes);
+    // E444 requires matching non-streaming local/central sizes. Preserve
+    // that invariant so this fixture reaches the intended bounds check.
     bytes.writeUInt32LE(bytes.length, central + 20);
+    bytes.writeUInt32LE(bytes.length, bytes.readUInt32LE(central + 42) + 18);
     expect(() => validateEmptyZipCrc(bytes)).toThrow(/local member data exceeds/);
   });
 
@@ -231,40 +234,61 @@ describe("E440 overlapping ZIP local member ranges", () => {
     return { first, second };
   }
 
-  it.each([false, true])(
-    "rejects a compressed payload overlapping the next local header (stream=%s)",
-    async (stream) => {
-      let bytes: Buffer;
-      if (stream) {
-        const zip = new JSZip();
-        zip.file("manifest.json", manifest);
-        zip.file("empty.js", "");
-        zip.file("background.js", "chrome.tabs.query({});");
-        bytes = Buffer.from(await zip.generateAsync({
-          type: "uint8array", compression: "DEFLATE", streamFiles: true,
-        }));
-      } else {
-        bytes = await fixture();
-      }
-      const { first, second } = centralEntries(bytes);
-      const firstLocal = bytes.readUInt32LE(first + 42);
-      const secondLocal = bytes.readUInt32LE(second + 42);
-      const dataStart = firstLocal + 30 + bytes.readUInt16LE(firstLocal + 26) +
-        bytes.readUInt16LE(firstLocal + 28);
-      expect(secondLocal).toBeGreaterThan(dataStart);
-      bytes.writeUInt32LE(secondLocal - dataStart + 2, first + 20);
-      expect(() => validateEmptyZipCrc(bytes)).toThrow(/Overlapping ZIP local member ranges/);
-      await expect(analyzePackage(id, bytes)).rejects.toThrow(/Overlapping ZIP local member ranges/);
-    },
-  );
+  it("rejects a non-streaming payload overlapping the next local header", async () => {
+    const bytes = await fixture();
+    const { first, second } = centralEntries(bytes);
+    const firstLocal = bytes.readUInt32LE(first + 42);
+    const secondLocal = bytes.readUInt32LE(second + 42);
+    const dataStart = firstLocal + 30 + bytes.readUInt16LE(firstLocal + 26) +
+      bytes.readUInt16LE(firstLocal + 28);
+    const expandedSize = secondLocal - dataStart + 2;
+    // E444 checks local/central agreement before range overlaps.
+    bytes.writeUInt32LE(expandedSize, first + 20);
+    bytes.writeUInt32LE(expandedSize, firstLocal + 18);
+    expect(() => validateEmptyZipCrc(bytes)).toThrow(/Overlapping ZIP local member ranges/);
+    await expect(analyzePackage(id, bytes)).rejects.toThrow(/Overlapping ZIP local member ranges/);
+  });
 
-  it("rejects a local extra field that overlaps the next member header", async () => {
+  it("rejects streaming payload overlap with a matching signed descriptor", async () => {
+    const zip = new JSZip();
+    zip.file("manifest.json", manifest);
+    zip.file("background.js", "A".repeat(200));
+    const bytes = Buffer.from(await zip.generateAsync({
+      type: "uint8array", compression: "STORE", streamFiles: true,
+    }));
+    const { first, second } = centralEntries(bytes);
+    const firstLocal = bytes.readUInt32LE(first + 42);
+    const secondLocal = bytes.readUInt32LE(second + 42);
+    const firstDataStart = firstLocal + 30 + bytes.readUInt16LE(firstLocal + 26) +
+      bytes.readUInt16LE(firstLocal + 28);
+    const secondDataStart = secondLocal + 30 + bytes.readUInt16LE(secondLocal + 26) +
+      bytes.readUInt16LE(secondLocal + 28);
+    // Place a self-consistent first-member descriptor inside the second
+    // member's payload, leaving its local header intact. This specifically
+    // tests overlap rather than failing the earlier E441 descriptor gate.
+    const descriptor = secondDataStart + 2;
+    const expandedSize = descriptor - firstDataStart;
+    bytes.writeUInt32LE(expandedSize, first + 20);
+    bytes.writeUInt32LE(0x08074b50, descriptor);
+    bytes.writeUInt32LE(bytes.readUInt32LE(first + 16), descriptor + 4);
+    bytes.writeUInt32LE(expandedSize, descriptor + 8);
+    bytes.writeUInt32LE(bytes.readUInt32LE(first + 24), descriptor + 12);
+    expect(() => validateEmptyZipCrc(bytes)).toThrow(/Overlapping ZIP local member ranges/);
+    await expect(analyzePackage(id, bytes)).rejects.toThrow(/Overlapping ZIP local member ranges/);
+  });
+
+  it("rejects a validly encoded local extra field that overlaps the next member header", async () => {
     const bytes = await fixture();
     const { first, second } = centralEntries(bytes);
     const firstLocal = bytes.readUInt32LE(first + 42);
     const secondLocal = bytes.readUInt32LE(second + 42);
     const nameEnd = firstLocal + 30 + bytes.readUInt16LE(firstLocal + 26);
-    bytes.writeUInt16LE(secondLocal - nameEnd + 2, firstLocal + 28);
+    const expandedExtra = secondLocal - nameEnd + 2;
+    // E442 parses extra fields before E440 checks member ranges. Supply a
+    // syntactically valid unknown extra field, without altering next header.
+    bytes.writeUInt16LE(0x9999, nameEnd);
+    bytes.writeUInt16LE(expandedExtra - 4, nameEnd + 2);
+    bytes.writeUInt16LE(expandedExtra, firstLocal + 28);
     expect(() => validateEmptyZipCrc(bytes)).toThrow(/Overlapping ZIP local member ranges/);
     await expect(analyzePackage(id, bytes)).rejects.toThrow(/Overlapping ZIP local member ranges/);
   });
