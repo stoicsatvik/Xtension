@@ -1,7 +1,7 @@
 /**
- * Check central-directory CRC for zero-length ZIP members before JSZip loads them.
- * JSZip 3.10.x discards the CRC metadata of empty loaded entries, so a
- * subsequent streamed read cannot check it. This parses metadata only;
+ * Validate classic ZIP metadata before JSZip loads members, including
+ * empty-member CRC32 and streaming data descriptors. JSZip 3.10.x discards
+ * empty-member CRC metadata, so a later streamed read cannot check it.
  * it does not decompress files or authenticate archive contents.
  */
 export function validateEmptyZipCrc(zipBytes: Uint8Array): void {
@@ -92,7 +92,28 @@ export function validateEmptyZipCrc(zipBytes: Uint8Array): void {
     }
     // Each local header, name, extra field, and compressed payload must be
     // disjoint from every other member. E439 checked only the central boundary.
-    memberRanges.push({ start: localStart, end: dataStart + u32(pos + 20) });
+    const dataEnd = dataStart + u32(pos + 20);
+    let memberEnd = dataEnd;
+    // A streaming member (bit 3) has a descriptor after its payload.
+    // Match CRC32 and both sizes to the central directory, and reserve its
+    // bytes against overlap with any subsequent local member.
+    if ((u16(pos + 8) & 0x0008) !== 0) {
+      const matches = (at: number) =>
+        at <= centralStart && centralStart - at >= 12 &&
+        u32(at) === u32(pos + 16) &&
+        u32(at + 4) === u32(pos + 20) &&
+        u32(at + 8) === u32(pos + 24);
+      // Unsigned descriptors are legal. If their CRC equals the optional
+      // signature magic, still accept the 12-byte interpretation.
+      const signed = dataEnd <= centralStart && centralStart - dataEnd >= 4 &&
+        u32(dataEnd) === 0x08074b50 && matches(dataEnd + 4);
+      const unsigned = matches(dataEnd);
+      if (!signed && !unsigned) {
+        throw new Error("ZIP data descriptor CRC32 or sizes mismatch");
+      }
+      memberEnd = dataEnd + (signed ? 16 : 12);
+    }
+    memberRanges.push({ start: localStart, end: memberEnd });
     if (u32(pos + 24) === 0 && u32(pos + 16) !== 0) {
       throw new Error("ZIP empty member CRC32 mismatch");
     }
