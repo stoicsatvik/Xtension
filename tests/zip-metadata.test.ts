@@ -410,3 +410,27 @@ describe("E442 ZIP Unicode Path alias resistance", () => {
     expect(Object.keys(loaded.files).sort()).toEqual(["é.js", "ø.js"].sort());
   });
 });
+
+
+describe("E443 ZIP central-directory entry count preflight", () => {
+  async function manyEntries(count: number): Promise<Uint8Array> {
+    const zip = new JSZip();
+    zip.file("manifest.json", manifest);
+    for (let i = 1; i < count; i++) {
+      zip.file(`empty-${i}.js`, "", { createFolders: false });
+    }
+    return zip.generateAsync({ type: "uint8array", compression: "STORE" });
+  }
+
+  it("accepts the 2000-entry boundary without loading all members", async () => {
+    const bytes = await manyEntries(2_000);
+    expect(() => validateEmptyZipCrc(bytes)).not.toThrow();
+  });
+
+  it("rejects 2001 small ZIP members before JSZip allocation", async () => {
+    const bytes = await manyEntries(2_001);
+    expect(bytes.byteLength).toBeLessThan(250_000);
+    expect(() => validateEmptyZipCrc(bytes)).toThrow(/more than 2000 entries/);
+    await expect(analyzePackage(id, bytes)).rejects.toThrow(/more than 2000 entries/);
+  });
+});
