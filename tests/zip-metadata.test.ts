@@ -131,13 +131,15 @@ describe("E438 ambiguous ZIP pathname preflight", () => {
 
   it.each(["src/../manifest.json", "./manifest.json", "src/./background.js"])(
     "rejects relative path component %s", async (name) => {
-      expect(() => validateEmptyZipCrc(await archiveWithName(name))).toThrow(/Unsafe ZIP central-directory filename/);
+      const bytes = await archiveWithName(name);
+      expect(() => validateEmptyZipCrc(bytes)).toThrow(/Unsafe ZIP central-directory filename/);
     },
   );
 
   it.each(["/absolute.js", "..\\manifest.json", "src//background.js"])(
     "rejects noncanonical separator path %s", async (name) => {
-      expect(() => validateEmptyZipCrc(await archiveWithName(name))).toThrow(/Unsafe ZIP central-directory filename/);
+      const bytes = await archiveWithName(name);
+      expect(() => validateEmptyZipCrc(bytes)).toThrow(/Unsafe ZIP central-directory filename/);
     },
   );
 
