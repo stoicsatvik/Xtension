@@ -434,3 +434,32 @@ describe("E443 ZIP central-directory entry count preflight", () => {
     await expect(analyzePackage(id, bytes)).rejects.toThrow(/more than 2000 entries/);
   });
 });
+
+describe("E444 non-streaming local/central CRC32 and size agreement", () => {
+  it.each([
+    ["CRC32", 14],
+    ["compressed size", 18],
+    ["uncompressed size", 22],
+  ] as const)("rejects contradictory local %s before JSZip loading", async (_field, offset) => {
+    const bytes = await fixture();
+    const eocd = eocdPosition(bytes);
+    const central = bytes.readUInt32LE(eocd + 16);
+    const local = bytes.readUInt32LE(central + 42);
+    expect(bytes.readUInt16LE(local + 6) & 0x0008).toBe(0);
+    bytes.writeUInt32LE(bytes.readUInt32LE(local + offset) ^ 1, local + offset);
+    expect(() => validateEmptyZipCrc(bytes)).toThrow(/local\/central CRC32 or sizes mismatch/);
+    await expect(analyzePackage(id, bytes)).rejects.toThrow(/local\/central CRC32 or sizes mismatch/);
+  });
+
+  it("preserves ordinary non-streaming and bit-3 streaming archives", async () => {
+    const regular = await fixture();
+    expect(() => validateEmptyZipCrc(regular)).not.toThrow();
+    const zip = new JSZip();
+    zip.file("manifest.json", manifest);
+    zip.file("background.js", "console.log(1)");
+    const streamed = Buffer.from(await zip.generateAsync({
+      type: "uint8array", compression: "DEFLATE", streamFiles: true,
+    }));
+    expect(() => validateEmptyZipCrc(streamed)).not.toThrow();
+  });
+});
