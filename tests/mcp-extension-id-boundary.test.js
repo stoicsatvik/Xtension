@@ -36,7 +36,7 @@ describe("E475 MCP Chrome extension identity boundary", () => {
 
   it("validates every MCP extension tool input schema", () => {
     const server = readFileSync(new URL("../mcp/src/server.mjs", import.meta.url), "utf8");
-    expect(server.match(/extensionId: z\\.string\\(\\)\\.regex\\(\\/\\^\\[a-p\\]\\{32\\}\\$\\//g)).toHaveLength(5);
+    expect(server.split('extensionId: z.string().regex(/^[a-p]{32}$/, "Invalid Chrome extension ID.")').length - 1).toBe(5);
     expect(server).not.toContain("extensionId: z.string().min(1)");
   });
 
