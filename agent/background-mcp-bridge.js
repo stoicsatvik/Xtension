@@ -4,7 +4,7 @@ import {
   MCP_COMMAND_JOURNAL_KEY,
   serializeCommandExecutions
 } from "./mcp-command-journal.js";
-import { shouldRestartMcpLoop } from "./mcp-bridge-policy.js";
+import { assertChromeExtensionId, shouldRestartMcpLoop } from "./mcp-bridge-policy.js";
 import { MCP_COMMAND_RESULTS_KEY } from "./mcp-command-cache.js";
 
 const MCP_CONFIG_KEY = "xtension.mcp.v1";
@@ -78,6 +78,9 @@ async function sendWorker(message) {
 
 async function executeCommand(command) {
   const payload = command?.payload ?? {};
+  if (["set-verdict", "start-trial", "restore-extension", "uninstall-extension"].includes(command?.type)) {
+    assertChromeExtensionId(payload.extensionId);
+  }
   switch (command?.type) {
     case "set-verdict":
       if (!["essential", "optional", "unnecessary"].includes(payload.verdict)) {

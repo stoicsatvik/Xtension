@@ -138,7 +138,7 @@ function buildMcpServer(store) {
 
   server.registerTool("xtension_get_extension", {
     description: "Get detailed local evidence for one installed extension by extension ID.",
-    inputSchema: z.object({ extensionId: z.string().min(1) }),
+    inputSchema: z.object({ extensionId: z.string().regex(/^[a-p]{32}$/, "Invalid Chrome extension ID.") }),
     annotations: { readOnlyHint: true }
   }, async ({ extensionId }) => {
     const snapshot = store.state.snapshot;
@@ -178,7 +178,7 @@ function buildMcpServer(store) {
   server.registerTool("xtension_set_verdict", {
     description: "Set the user's explicit local verdict for an extension: essential, optional, or unnecessary.",
     inputSchema: z.object({
-      extensionId: z.string().min(1),
+      extensionId: z.string().regex(/^[a-p]{32}$/, "Invalid Chrome extension ID."),
       verdict: z.enum(["essential", "optional", "unnecessary"])
     }),
     annotations: { readOnlyHint: false, destructiveHint: false }
@@ -186,19 +186,19 @@ function buildMcpServer(store) {
 
   server.registerTool("xtension_start_trial", {
     description: "Start a reversible disable trial for an extension. Xtension never uninstalls it automatically.",
-    inputSchema: z.object({ extensionId: z.string().min(1), days: z.number().int().min(1).max(30).optional().default(7) }),
+    inputSchema: z.object({ extensionId: z.string().regex(/^[a-p]{32}$/, "Invalid Chrome extension ID."), days: z.number().int().min(1).max(30).optional().default(7) }),
     annotations: { readOnlyHint: false, destructiveHint: false }
   }, async (input) => asText(await store.enqueueCommand("start-trial", input)));
 
   server.registerTool("xtension_restore_extension", {
     description: "Re-enable an extension, including one disabled during an Xtension trial.",
-    inputSchema: z.object({ extensionId: z.string().min(1) }),
+    inputSchema: z.object({ extensionId: z.string().regex(/^[a-p]{32}$/, "Invalid Chrome extension ID.") }),
     annotations: { readOnlyHint: false, destructiveHint: false }
   }, async (input) => asText(await store.enqueueCommand("restore-extension", input)));
 
   server.registerTool("xtension_uninstall_extension", {
     description: "Ask Chrome to uninstall an extension. Chrome's own confirmation UI remains in the loop.",
-    inputSchema: z.object({ extensionId: z.string().min(1) }),
+    inputSchema: z.object({ extensionId: z.string().regex(/^[a-p]{32}$/, "Invalid Chrome extension ID.") }),
     annotations: { readOnlyHint: false, destructiveHint: true }
   }, async (input) => asText(await store.enqueueCommand("uninstall-extension", input)));
 
