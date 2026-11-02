@@ -1,4 +1,5 @@
 import { analyzePackage, chromeUpdateUrl, extractExtensionId, type AnalysisReport } from "@/lib/analyzer";
+import { BoundedDownloadError, readBoundedResponseBytes } from "@/lib/bounded-download";
 
 const MAX_PACKAGE_BYTES = 25 * 1024 * 1024;
 
@@ -37,21 +38,16 @@ export async function fetchAndAnalyzeExtension(input: string): Promise<AnalysisR
     );
   }
 
-  const lengthHeader = response.headers.get("content-length");
-  if (lengthHeader && Number(lengthHeader) > MAX_PACKAGE_BYTES) {
-    throw new ExtensionFetchError("Extension package is too large for the MVP scanner.", 413);
+  let bytes: Uint8Array;
+  try {
+    // Content-Length can be absent or false. Enforce the bound while reading.
+    bytes = await readBoundedResponseBytes(response, MAX_PACKAGE_BYTES);
+  } catch (error) {
+    if (error instanceof BoundedDownloadError) {
+      throw new ExtensionFetchError(error.message, error.status);
+    }
+    throw new ExtensionFetchError("Chrome package download failed.", 502);
   }
 
-  const buffer = await response.arrayBuffer();
-  if (buffer.byteLength === 0) {
-    throw new ExtensionFetchError(
-      "Chrome returned an empty package. The listing may be blocked, private, or unavailable.",
-      502,
-    );
-  }
-  if (buffer.byteLength > MAX_PACKAGE_BYTES) {
-    throw new ExtensionFetchError("Extension package is too large for the MVP scanner.", 413);
-  }
-
-  return analyzePackage(id, new Uint8Array(buffer));
+  return analyzePackage(id, bytes);
 }
